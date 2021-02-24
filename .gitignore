@@ -1,0 +1,12 @@
+# Python
+.mypy_cache/
+
+# VSCode
+.vscode/
+
+# C object files
+bin/
+obj/
+
+# Generated file
+src/instructions.c
