@@ -131,6 +131,7 @@ class Instruction:
     flag_z: Optional[str] = None
     flag_c: Optional[str] = None
     precondition: Optional[str] = None
+    words: int = 1
 
     @property
     def plain_opcode(self):
@@ -380,7 +381,7 @@ INSTRUCTIONS = (
                 flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="CPSE",
                 opcode="0001_00rd_dddd_rrrr",
-                operation="if(m->R[d] == m->R[r]) m->PC = (m->PC + 1) & PC_MASK;"),
+                operation="if(m->R[d] == m->R[r]) m->SKIP = true;"),
     Instruction(mnemonic="DEC",
                 opcode="1001_010d_dddd_1010",
                 reads=(("R", "d", 8), ),
@@ -439,19 +440,19 @@ INSTRUCTIONS = (
                 opcode="10q0_qq0d_dddd_1qqq",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Y_H, m->Y_L) + q);"),
     Instruction(mnemonic="LD_Z_i",
-                opcode="1000_000d_dddd_1000",
+                opcode="1000_000d_dddd_0000",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));"),
     Instruction(mnemonic="LD_Z_ii",
-                opcode="1001_000d_dddd_1001",
+                opcode="1001_000d_dddd_0001",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));",
                 writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
     Instruction(mnemonic="LD_Z_iii",
-                opcode="1001_000d_dddd_1010",
+                opcode="1001_000d_dddd_0010",
                 operation="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) - 1);",
                 writeback="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));"
                 ),  # Bit of a hack reordering here but fine as no checks
     Instruction(mnemonic="LD_Z_iv",
-                opcode="10q0_qq0d_dddd_1qqq",
+                opcode="10q0_qq0d_dddd_0qqq",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L) + q);"),
     Instruction(mnemonic="LDI", opcode="1110_KKKK_dddd_KKKK", operation="m->R[0x10 + d] = K;"),
     Instruction(mnemonic="LPM_i",
@@ -586,16 +587,16 @@ INSTRUCTIONS = (
                 operation="m->IO[A] = SetBit(m->IO[A], b);"),
     Instruction(mnemonic="SBIC",
                 opcode="1001_1001_AAAA_Abbb",
-                operation="if(!TestBit(m->IO[A], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+                operation="if(!TestBit(m->IO[A], b)) m->SKIP = true;"),
     Instruction(mnemonic="SBIS",
-                opcode="1001_1001_AAAA_Abbb",
-                operation="if(TestBit(m->IO[A], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+                opcode="1001_1011_AAAA_Abbb",
+                operation="if(TestBit(m->IO[A], b)) m->SKIP = true;"),
     Instruction(mnemonic="SBRC",
                 opcode="1111_110r_rrrr_0bbb",
-                operation="if(!TestBit(m->R[r], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+                operation="if(!TestBit(m->R[r], b)) m->SKIP = true;"),
     Instruction(mnemonic="SBRS",
-                opcode="1111_110r_rrrr_0bbb",
-                operation="if(TestBit(m->R[r], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+                opcode="1111_111r_rrrr_0bbb",
+                operation="if(TestBit(m->R[r], b)) m->SKIP = true;"),
     Instruction(mnemonic="ST_X_i",
                 opcode="1001_001r_rrrr_1100",
                 operation="SetDataMem(m, Get16(m->X_H, m->X_L), m->R[r]);"),
@@ -663,6 +664,66 @@ INSTRUCTIONS = (
 )
 
 
+def generate_decode_and_execute():
+    instruction_tree = {}
+    for instruction in INSTRUCTIONS:
+        key = (instruction.signature, instruction.mask)
+        if key not in instruction_tree:
+            instruction_tree[key] = []
+        if instruction.precondition:
+            instruction_tree[key].insert(0, instruction)
+        else:
+            instruction_tree[key].append(instruction)
+
+    yield "void decode_and_execute_instruction(Mem16 opcode, Machine *m) {"
+    yield indented("const bool skip = m->SKIP;")
+    first = True
+    for (signature, mask), instructions in instruction_tree.items():
+        yield indented("{}if ((opcode & {m}) == {s})".format("" if first else "else ",
+                                                             m=mask,
+                                                             s=signature))
+        first = False
+        yield indented("{")
+        yield indented("if (skip)", indent_depth=2)
+        yield indented("{", indent_depth=2)
+        yield indented("m->PC = (m->PC + {}) % PC_MASK;".format(instructions[0].words),
+                       indent_depth=3)
+        yield indented("m->SKIP = false;", indent_depth=3)
+        yield indented("return;", indent_depth=3)
+        yield indented("}", indent_depth=2)
+        if len(instructions) == 1:
+            yield indented("instruction_{}(opcode, m);".format(instructions[0].mnemonic.lower()),
+                           indent_depth=2)
+        else:
+            first_instruction = True
+            for name, variable in instructions[0].variables.items():
+                yield indented("const {} {} = {};".format(variable.data_type, name,
+                                                          variable.getter),
+                               indent_depth=2)
+            for instruction in instructions:
+                got_else = False
+                if instruction.precondition:
+                    yield indented("{}if ({})".format("" if first_instruction else "else ",
+                                                      instruction.precondition),
+                                   indent_depth=2)
+                else:
+                    got_else = True
+                    if not first_instruction:
+                        yield indented("else", indent_depth=2)
+                    else:
+                        yield indented("#warning Unwanted Collision", indent_depth=2)
+                yield indented("{", indent_depth=2)
+                yield indented("instruction_{}(opcode, m);".format(instruction.mnemonic.lower()),
+                               indent_depth=3)
+                yield indented("}", indent_depth=2)
+                first_instruction = False
+                if got_else:
+                    break
+        yield indented("}")
+    yield "}"
+    yield ""
+
+
 def generate_instructions():
     yield "#include \"instructions.h\""
     yield ""
@@ -672,32 +733,17 @@ def generate_instructions():
     for instruction in INSTRUCTIONS:
         yield from instruction.code
         yield ""
-    yield "void decode_and_execute_instruction(Mem16 opcode, Machine *m) {"
-    first = True
-    for instruction in INSTRUCTIONS:
-        yield indented("{}if ((opcode & {m}) == {s})".format("" if first else "else ",
-                                                             m=instruction.mask,
-                                                             s=instruction.signature))
-        first = False
-        yield indented("{")
-        yield indented("instruction_{}(opcode, m);".format(instruction.mnemonic.lower()),
-                       indent_depth=2)
-        yield indented("}")
-    yield "}"
-    yield ""
 
 
 def main():
-    for instruction_1 in INSTRUCTIONS:
-        for instruction_2 in INSTRUCTIONS:
-            if instruction_1 == instruction_2:
-                continue
-            if (instruction_1.signature == instruction_2.signature) and (instruction_1.mask == instruction_2.mask):
-                print("Warning: instruction collision of {} and {}".format(
-                    instruction_1.mnemonic, instruction_2.mnemonic))
     output_path = path.join(os.getcwd(), "src", "instructions.c")
     with open(output_path, "w") as fd:
-        fd.write("\r\n".join(generate_instructions()))
+        for line in generate_instructions():
+            fd.write(line)
+            fd.write("\r\n")
+        for line in generate_decode_and_execute():
+            fd.write(line)
+            fd.write("\r\n")
 
 
 if __name__ == "__main__":

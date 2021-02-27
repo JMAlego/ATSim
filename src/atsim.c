@@ -3,5 +3,6 @@
 
 int main(void)
 {
+    Machine m;
     return 0;
 }

@@ -65,6 +65,7 @@ typedef struct
     Mem16 FLASH[FLASH_SIZE / 2];
     Mem8 EEPROM[EEPROM_SIZE];
     Mem8 SRAM[SRAM_SIZE];
+    bool SKIP;
 } Machine;
 
 static inline Mem8 GetProgMemByte(Machine *m, Address16 a)

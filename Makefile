@@ -1,4 +1,5 @@
 CC = clang
+PYTHON ?= python3
 CFLAGS ?= -std=c99 -Wall -Wextra -pedantic
 CFLAGS_DEPS ?= $(CFLAGS) -MMD -MP
 OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
@@ -12,15 +13,15 @@ TARGET := atsim
 all: bin/$(TARGET) $(OBJ_PLUS)
 
 obj/%.o: src/%.c
-	@ mkdir -p obj
+	@mkdir -p obj
 	$(CC) $(CFLAGS_DEPS) -c -o $@ $<
 
 bin/$(TARGET): src/$(TARGET).c $(OBJ_PLUS)
-	@ mkdir -p bin
+	@mkdir -p bin
 	$(CC) $(CFLAGS) -o bin/$(TARGET) $(OBJ)
 
 src/instructions.c: instructions.py
-	python3.7 instructions.py
+	$(PYTHON) instructions.py
 
 instructions: src/instructions.c
 
