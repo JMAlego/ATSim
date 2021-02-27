@@ -4,6 +4,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#define UNUSED(x) (void)(x)
+#ifdef CHECK_CONDITIONS
+#define PRECONDITION(x)
+#else
+#define PRECONDITION(x) UNUSED(x)
+#endif
+
 #define FLASH_SIZE (8 * 1024)
 #define EEPROM_SIZE (512)
 #define SRAM_SIZE (512)
@@ -34,21 +41,23 @@ typedef uint16_t Address16;
         l = (v)&0xff;            \
     } while (0)
 
-typedef struct
+/* This could be a bit field but single but booleans are less efficient on
+   most platforms. */
+typedef enum
 {
-    bool C : 1;
-    bool Z : 1;
-    bool N : 1;
-    bool V : 1;
-    bool S : 1;
-    bool H : 1;
-    bool T : 1;
-    bool I : 1;
+    SREG_C = 0,
+    SREG_Z = 1,
+    SREG_N = 2,
+    SREG_V = 3,
+    SREG_S = 4,
+    SREG_H = 5,
+    SREG_T = 6,
+    SREG_I = 7,
 } StatusRegister;
 
 typedef struct
 {
-    StatusRegister SREG;
+    bool SREG[8];
     Reg16 PC;
     Reg16 SP;
     Reg8 R[GP_REGISTERS];
@@ -57,6 +66,11 @@ typedef struct
     Mem8 EEPROM[EEPROM_SIZE];
     Mem8 SRAM[SRAM_SIZE];
 } Machine;
+
+static inline Mem8 GetProgMemByte(Machine *m, Address16 a)
+{
+    return (m->FLASH[(a >> 1) % PROG_MEM_SIZE] >> (8 * (1 - (a & 0x1)))) & 0xff;
+}
 
 static inline Mem16 GetProgMem(Machine *m, Address16 a)
 {
@@ -106,99 +120,22 @@ static inline void SetDataMem(Machine *m, Address16 a, Mem8 v)
 
 static inline void ClearStatusFlag(Machine *m, uint8_t index)
 {
-    switch (index)
-    {
-    case 7:
-        m->SREG.I = 0;
-        break;
-    case 6:
-        m->SREG.T = 0;
-        break;
-    case 5:
-        m->SREG.H = 0;
-        break;
-    case 4:
-        m->SREG.S = 0;
-        break;
-    case 3:
-        m->SREG.V = 0;
-        break;
-    case 2:
-        m->SREG.N = 0;
-        break;
-    case 1:
-        m->SREG.Z = 0;
-        break;
-    case 0:
-        m->SREG.C = 0;
-        break;
-
-    default:
-        break;
-    }
+    m->SREG[index & 0x7] = false;
 }
 
 static inline void SetStatusFlag(Machine *m, uint8_t index)
 {
-    switch (index)
-    {
-    case 7:
-        m->SREG.I = 1;
-        break;
-    case 6:
-        m->SREG.T = 1;
-        break;
-    case 5:
-        m->SREG.H = 1;
-        break;
-    case 4:
-        m->SREG.S = 1;
-        break;
-    case 3:
-        m->SREG.V = 1;
-        break;
-    case 2:
-        m->SREG.N = 1;
-        break;
-    case 1:
-        m->SREG.Z = 1;
-        break;
-    case 0:
-        m->SREG.C = 1;
-        break;
-
-    default:
-        break;
-    }
+    m->SREG[index & 0x7] = true;
 }
 
 static inline bool GetStatusFlag(Machine *m, uint8_t index)
 {
-    switch (index)
-    {
-    case 7:
-        return m->SREG.I;
-    case 6:
-        return m->SREG.T;
-    case 5:
-        return m->SREG.H;
-    case 4:
-        return m->SREG.S;
-    case 3:
-        return m->SREG.V;
-    case 2:
-        return m->SREG.N;
-    case 1:
-        return m->SREG.Z;
-    case 0:
-        return m->SREG.C;
-    default:
-        return 0;
-    }
+    return m->SREG[index & 0x7];
 }
 
 #define SetBit(val, bit) (val | (0x1 << bit))
 #define GetBit(val, bit) ((val & (0x1 << bit)) >> bit)
+#define TestBit(val, bit) ((val & (0x1 << bit)) != 0)
 #define ClearBit(val, bit) (val & ~(0x1 << bit))
 
 #endif

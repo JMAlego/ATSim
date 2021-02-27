@@ -16,6 +16,59 @@ def indented(to_indent: str, indent_depth: int = 1, indent_chars: str = "    ") 
     return "{}{}".format(indent_chars * indent_depth, to_indent)
 
 
+def flag_logic(logic_string, result_var, machine="m"):
+    if not set(logic_string).difference(set("0123456789")):
+        yield "{} = {};".format(result_var, logic_string)
+        return
+
+    if "^" in logic_string:
+        left, right, *_ = logic_string.split("^")
+        yield "{} = {} != {};".format(result_var, left.strip(), right.strip())
+        return
+
+    or_groups = set()
+    for or_group in logic_string.split("|"):
+        and_items = set()
+        for and_item in or_group.split("&"):
+            item_result = "{}"
+            and_item = and_item.strip()
+            invert = False
+            if and_item[0] == "!":
+                invert = True
+                and_item = and_item[1:]
+            var = ""
+            while and_item and and_item[0] not in set("0123456789"):
+                var += and_item[0]
+                and_item = and_item[1:]
+            if and_item and not set(and_item).difference(set("0123456789")):
+                item_result = "TestBit({}, {})".format(var, and_item)
+            else:
+                item_result = var
+            if invert:
+                item_result = "!{}".format(item_result)
+            and_items.add(item_result)
+        or_groups.add("{}".format(" && ".join(sorted(and_items))))
+    if len(or_groups) > 1:
+        for index, or_group in enumerate(sorted(or_groups), 1):
+            yield "const bool {}{} = {};".format(result_var, index, or_group)
+        result = "{}".format(" || ".join(
+            ["{}{}".format(result_var, x) for x in range(1, 1 + len(or_groups))]))
+    else:
+        result = or_groups.pop()
+    yield "{} = {};".format(result_var, result)
+
+
+def data_type(bit_width, prefix="uint", postfix="_t"):
+    size = 64
+    if bit_width <= 8:
+        size = 8
+    elif bit_width <= 16:
+        size = 16
+    elif bit_width <= 32:
+        size = 32
+    return "{}{}{}".format(prefix, size, postfix)
+
+
 @dataclass
 class Variable:
     name: str
@@ -27,14 +80,7 @@ class Variable:
 
     @property
     def data_type(self):
-        if self.bit_width <= 8:
-            return "uint8_t"
-        elif self.bit_width <= 16:
-            return "uint16_t"
-        elif self.bit_width <= 32:
-            return "uint32_t"
-        else:
-            return "uint64_t"
+        return data_type(self.bit_width)
 
     @property
     def getter(self):
@@ -61,7 +107,7 @@ class Variable:
                     group_strings.append("((opcode >> {}) & (0x{:x} << {}))".format(
                         min_index - end_index, 2**len(group) - 1, end_index))
             else:
-                group_strings.append("(opcode & 0x{:x})".format(len(group)))
+                group_strings.append("(opcode & 0x{:x})".format(2**len(group) - 1))
             end_index += len(group)
 
         bracket_string = "{}"
@@ -76,12 +122,15 @@ class Instruction:
     mnemonic: str
     opcode: str
     operation: str
+    reads: Optional[Tuple[Tuple[str, str, int], ...]] = None
     writeback: Optional[str] = None
-    check_flags: Set[Literal["H", "S", "V", "N", "Z", "C"]] = field(default_factory=set)
-    check_locations: Optional[Tuple[str, ...]] = None
-    check_width: int = 8
-    check_invert: bool = False
-    check_preserve_zero: bool = False
+    flag_h: Optional[str] = None
+    flag_s: Optional[str] = None
+    flag_v: Optional[str] = None
+    flag_n: Optional[str] = None
+    flag_z: Optional[str] = None
+    flag_c: Optional[str] = None
+    precondition: Optional[str] = None
 
     @property
     def plain_opcode(self):
@@ -101,7 +150,7 @@ class Instruction:
     def variables(self):
         result = dict()
         unique_chars = set(filter(lambda x: x not in ("0", "1"), self.plain_opcode))
-        for c in unique_chars:
+        for c in sorted(unique_chars):
             bits = list(
                 map(lambda x: len(self.plain_opcode) - x[0] - 1,
                     filter(lambda x: x[1] == c, enumerate(self.plain_opcode))))
@@ -109,131 +158,177 @@ class Instruction:
         return result
 
     @property
+    def var_reads(self):
+        if self.reads:
+            for read in self.reads:
+                var, index, size = read
+                yield "const {} {v}{i} = m->{v}[{i}];".format(data_type(size,
+                                                                        prefix="Reg",
+                                                                        postfix=""),
+                                                              v=var,
+                                                              i=index)
+
+    @property
     def checks(self):
-        if "N" in self.check_flags and self.check_locations:
-            result_location, *_ = self.check_locations
-            yield "m->SREG.N = GetBit({}, {w}) == 0x01;".format(result_location,
-                                                                w=self.check_width - 1)
+        if self.flag_n:
+            yield from flag_logic(self.flag_n, "N")
 
-        if "Z" in self.check_flags and self.check_locations:
-            result_location, *_ = self.check_locations
-            if self.check_preserve_zero:
-                yield "m->SREG.Z = ({} == 0x00) && m->SREG.Z;".format(result_location)
+        if self.flag_z:
+            if self.flag_z == "_":
+                yield "Z = R == 0x00;"
             else:
-                yield "m->SREG.Z = {} == 0x00;".format(result_location)
+                yield from flag_logic(self.flag_z, "Z")
 
-        if "C" in self.check_flags and self.check_locations and len(self.check_locations) > 2:
-            result_location, source_1, source_2, *_ = self.check_locations
-            if self.check_invert:
-                yield "const bool C1 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, source_2, w=self.check_width - 1)
-                yield "const bool C2 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, result_location, w=self.check_width - 1)
-                yield "const bool C3 = GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_2, w=self.check_width - 1)
-            else:
-                yield "const bool C1 = GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, source_2, w=self.check_width - 1)
-                yield "const bool C2 = GetBit({}, {w}) && !GetBit({}, {w});".format(
-                    source_1, result_location, w=self.check_width - 1)
-                yield "const bool C3 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_2, w=self.check_width - 1)
-            yield "m->SREG.C = C1 | C2 | C3;"
-        elif "C" in self.check_flags and self.check_locations and len(self.check_locations) > 1:
-            _, source, *_ = self.check_locations
-            yield "m->SREG.C = GetBit({}, 0);".format(source)
-        elif "C" in self.check_flags and self.check_locations:
-            yield "m->SREG.C = 1;"
+        if self.flag_c:
+            yield from flag_logic(self.flag_c, "C")
 
-        if "H" in self.check_flags and self.check_locations and len(self.check_locations) > 2:
-            result_location, source_1, source_2, *_ = self.check_locations
-            if self.check_invert:
-                yield "const bool H1 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, source_2, w=self.check_width // 2 - 1)
-                yield "const bool H2 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, result_location, w=self.check_width // 2 - 1)
-                yield "const bool H3 = GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_2, w=self.check_width // 2 - 1)
-            else:
-                yield "const bool H1 = GetBit({}, {w}) && GetBit({}, {w});".format(
-                    source_1, source_2, w=self.check_width // 2 - 1)
-                yield "const bool H2 = GetBit({}, {w}) && !GetBit({}, {w});".format(
-                    source_1, result_location, w=self.check_width // 2 - 1)
-                yield "const bool H3 = !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_2, w=self.check_width // 2 - 1)
-            yield "m->SREG.H = H1 | H2 | H3;"
+        if self.flag_h:
+            yield from flag_logic(self.flag_h, "H")
 
-        if "V" in self.check_flags and self.check_locations and len(self.check_locations) > 2:
-            result_location, source_1, source_2, *_ = self.check_locations
-            if self.check_invert:
-                yield "const bool V1 = !GetBit({}, {w}) && GetBit({}, {w}) && !GetBit({}, {w});".format(
-                    result_location, source_1, source_2, w=self.check_width - 1)
-                yield "const bool V2 = GetBit({}, {w}) && !GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_1, source_2, w=self.check_width - 1)
-            else:
-                yield "const bool V1 = !GetBit({}, {w}) && GetBit({}, {w}) && GetBit({}, {w});".format(
-                    result_location, source_1, source_2, w=self.check_width - 1)
-                yield "const bool V2 = GetBit({}, {w}) && !GetBit({}, {w}) && !GetBit({}, {w});".format(
-                    result_location, source_1, source_2, w=self.check_width - 1)
-            yield "m->SREG.V = V1 | V2;"
-        elif "V" in self.check_flags and self.check_locations and len(self.check_locations) > 1:
-            yield "m->SREG.V = m->SREG.N != m->SREG.C;"
-        elif "V" in self.check_flags and self.check_locations:
-            yield "m->SREG.V = 0;"
+        if self.flag_v:
+            yield from flag_logic(self.flag_v, "V")
 
-        if "S" in self.check_flags:
-            yield "m->SREG.S = m->SREG.N != m->SREG.V;"
+        if self.flag_s:
+            yield from flag_logic(self.flag_s, "S")
+
+    @property
+    def check_reads(self):
+        if self.flag_c:
+            yield "bool C = m->SREG[SREG_C];"
+
+        if self.flag_z:
+            yield "bool Z = m->SREG[SREG_Z];"
+
+        if self.flag_n:
+            yield "bool N = m->SREG[SREG_N];"
+
+        if self.flag_v:
+            yield "bool V = m->SREG[SREG_V];"
+
+        if self.flag_s:
+            yield "bool S = m->SREG[SREG_S];"
+
+        if self.flag_h:
+            yield "bool H = m->SREG[SREG_H];"
+
+    @property
+    def check_writes(self):
+        if self.flag_c:
+            yield "m->SREG[SREG_C] = C;"
+
+        if self.flag_z:
+            yield "m->SREG[SREG_Z] = Z;"
+
+        if self.flag_n:
+            yield "m->SREG[SREG_N] = N;"
+
+        if self.flag_v:
+            yield "m->SREG[SREG_V] = V;"
+
+        if self.flag_s:
+            yield "m->SREG[SREG_S] = S;"
+
+        if self.flag_h:
+            yield "m->SREG[SREG_H] = H;"
 
     @property
     def code(self):
-        yield "void instruction_{}(Mem16 opcode, Machine *m)".format(self.mnemonic.lower())
+        yield "static inline void instruction_{}(Mem16 opcode, Machine *m)".format(
+            self.mnemonic.lower())
         yield "{"
+        if any(self.variables):
+            yield indented("/* Extract operands from opcode. */")
         for name, variable in self.variables.items():
             yield indented("const {} {} = {};".format(variable.data_type, name, variable.getter))
+        if self.precondition:
+            yield indented("/* Assert preconditions. */")
+            yield indented("PRECONDITION({});".format(self.precondition))
+        if not any(self.variables):
+            yield indented("/* No operands in opcode so mark as unused. */")
+            yield indented("UNUSED(opcode);")
+        if any(self.var_reads):
+            yield indented("/* Read vars for operation. */")
+        for var_read in self.var_reads:
+            yield indented(var_read)
+        if any(self.check_reads):
+            yield indented("/* Read flags for operation. */")
+        for check_read in self.check_reads:
+            yield indented(check_read)
+        yield indented("/* Perform instruction operation. */")
         yield indented(self.operation)
+        if any(self.checks):
+            yield indented("/* Update flags. */")
         for check in self.checks:
             yield indented(check)
         if self.writeback:
+            yield indented("/* Writeback vars. */")
             yield indented(self.writeback)
+        if any(self.check_writes):
+            yield indented("/* Writeback flags. */")
+        for check_write in self.check_writes:
+            yield indented(check_write)
         yield "}"
 
 
 INSTRUCTIONS = (
     Instruction(mnemonic="ADC",
                 opcode="0001_11rd_dddd_rrrr",
-                operation="const Reg8 Rd = m->R[d] + m->R[r] + (m->SREG.C ? 1 : 0);",
-                writeback="m->R[d] = Rd;",
-                check_flags={"H", "S", "V", "N", "Z", "C"},
-                check_locations=("Rd", "m->R[d]", "m->R[r]")),
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd + Rr + (C ? 1 : 0);",
+                writeback="m->R[d] = R;",
+                flag_h="Rd3 & Rr3 | Rr3 & !R3 | !R3 & Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & Rr7 & !R7 | !Rd7 & !Rr7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd7 & Rr7 | Rr7 & !R7 | !R7 & Rd7"),
     Instruction(mnemonic="ADD",
-                opcode="0001_11rd_dddd_rrrr",
-                operation="const Reg8 Rd = m->R[d] + m->R[r];",
-                writeback="m->R[d] = Rd;",
-                check_flags={"H", "S", "V", "N", "Z", "C"},
-                check_locations=("Rd", "m->R[d]", "m->R[r]")),
-    Instruction(mnemonic="AND",
-                opcode="0001_11rd_dddd_rrrr",
-                operation="const Reg8 Rd = m->R[d] & m->R[r];",
-                writeback="m->R[d] = Rd;",
-                check_flags={"S", "V", "N", "Z"},
-                check_locations=("Rd", "m->R[d]", "m->R[r]")),
-    Instruction(mnemonic="ANDI",
-                opcode="0111_KKKK_dddd_KKKK",
-                operation="const Reg8 Rd = m->R[d] & K;",
-                writeback="m->R[d] = Rd;",
-                check_flags={"S", "V", "N", "Z"},
-                check_locations=("Rd", )),
+                opcode="0000_11rd_dddd_rrrr",
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd + Rr;",
+                writeback="m->R[d] = R;",
+                flag_h="Rd3 & Rr3 | Rr3 & !R3 | !R3 & Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & Rr7 & !R7 | !Rd7 & !Rr7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd7 & Rr7 | Rr7 & !R7 | !R7 & Rd7"),
+    Instruction(
+        mnemonic="AND",
+        opcode="0010_00rd_dddd_rrrr",
+        reads=(("R", "d", 8), ("R", "r", 8)),
+        operation="const Reg8 R = Rd & Rr;",
+        writeback="m->R[d] = R;",
+        flag_s="N ^ V",
+        flag_v="0",
+        flag_n="R7",
+        flag_z="_",
+    ),
+    Instruction(
+        mnemonic="ANDI",
+        opcode="0111_KKKK_dddd_KKKK",
+        operation="const Reg8 R = m->R[d + 0x10] & K;",
+        writeback="m->R[d + 0x10] = R;",
+        flag_s="N ^ V",
+        flag_v="0",
+        flag_n="R7",
+        flag_z="_",
+    ),
     Instruction(mnemonic="ASR",
                 opcode="1001_010d_dddd_0101",
-                operation="const Reg8 Rd = (m->R[d] >> 1) | (m->R[d] & 0x80);",
-                writeback="m->R[d] = Rd;",
-                check_flags={"S", "V", "N", "Z", "C"},
-                check_locations=("Rd", "m->R[d]")),
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = (Rd >> 1) | (Rd & 0x80);",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="N ^ C",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd0"),
     Instruction(mnemonic="BCLR", opcode="1001_0100_1sss_1000", operation="ClearStatusFlag(m, s);"),
     Instruction(mnemonic="BSET", opcode="1001_0100_0sss_1000", operation="SetStatusFlag(m, s);"),
     Instruction(mnemonic="BLD",
                 opcode="1111_100d_dddd_0bbb",
-                operation="m->R[d] = m->SREG.T ? SetBit(m->R[d], b) : ClearBit(m->R[d], b);"),
+                operation="m->R[d] = m->SREG[SREG_T] ? SetBit(m->R[d], b) : ClearBit(m->R[d], b);"),
     Instruction(mnemonic="BRBC",
                 opcode="1111_01kk_kkkk_ksss",
                 operation="if(!GetStatusFlag(m, s)) m->PC = (m->PC + k) & PC_MASK;"),
@@ -245,35 +340,361 @@ INSTRUCTIONS = (
                 operation="m->IO[A] = ClearBit(m->IO[A], b);"),
     Instruction(mnemonic="COM",
                 opcode="1001_010d_dddd_0000",
-                operation="const Reg8 Rd = 0xff - m->R[d];",
-                writeback="m->R[d] = Rd;",
-                check_flags={"S", "V", "N", "Z", "C"},
-                check_locations=("Rd", )),
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = 0xff - Rd;",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="0",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="1"),
     Instruction(mnemonic="CP",
                 opcode="0001_01rd_dddd_rrrr",
-                operation="const Reg8 R = m->R[d] - m->R[r];",
-                check_flags={"H", "S", "V", "N", "Z", "C"},
-                check_locations=("R", "m->R[d]", "m->R[r]"),
-                check_invert=True),
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd - Rr;",
+                flag_h="!Rd3 & Rr3 | Rr3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !Rr7 & !R7 | !Rd7 & Rr7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="CPC",
                 opcode="0000_01rd_dddd_rrrr",
-                operation="const Reg8 R = m->R[d] - m->R[r] - (m->SREG.C ? 1 : 0);",
-                check_flags={"H", "S", "V", "N", "Z", "C"},
-                check_locations=("R", "m->R[d]", "m->R[r]"),
-                check_invert=True,
-                check_preserve_zero=True),
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd - Rr - (C ? 1 : 0);",
+                flag_h="!Rd3 & Rr3 | Rr3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !Rr7 & !R7 | !Rd7 & Rr7 & R7",
+                flag_n="R7",
+                flag_z="!R7 & !R6 & !R5 & !R4 & !R3 & !R2 & !R1 & !R0 & Z",
+                flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="CPI",
+                opcode="0011_KKKK_dddd_KKKK",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd - K;",
+                flag_h="!Rd3 & K3 | K3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !K7 & !R7 | !K7 & K7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="CPSE",
+                opcode="0001_00rd_dddd_rrrr",
+                operation="if(m->R[d] == m->R[r]) m->PC = (m->PC + 1) & PC_MASK;"),
+    Instruction(mnemonic="DEC",
+                opcode="1001_010d_dddd_1010",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd - 1;",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="!R7 & R6 & R5 & R4 & R3 & R2 & R1 & R0",
+                flag_n="R7",
+                flag_z="_"),
+    Instruction(mnemonic="EOR",
+                opcode="0010_01rd_dddd_rrrr",
+                operation="const Reg8 R = m->R[d] ^ m->R[r];",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="0",
+                flag_n="R7",
+                flag_z="_"),
+    Instruction(mnemonic="IJMP",
+                opcode="1001_0100_0000_1001",
+                operation="m->PC = Get16(m->Z_H, m->Z_L) & PC_MASK;"),
+    Instruction(mnemonic="IN", opcode="1011_0AAd_dddd_AAAA", operation="m->R[d] = m->IO[A];"),
+    Instruction(mnemonic="INC",
+                opcode="1001_010d_dddd_0011",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd + 1;",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="R7 & !R6 & !R5 & !R4 & !R3 & !R2 & !R1 & !R0",
+                flag_n="R7",
+                flag_z="_"),
+    Instruction(mnemonic="LD_X_i",
+                opcode="1001_000d_dddd_1100",
+                operation="m->R[d] = GetDataMem(m, Get16(m->X_H, m->X_L));"),
+    Instruction(mnemonic="LD_X_ii",
+                opcode="1001_000d_dddd_1101",
+                operation="m->R[d] = GetDataMem(m, Get16(m->X_H, m->X_L));",
+                writeback="Set16(m->X_H, m->X_L, Get16(m->X_H, m->X_L) + 1);"),
+    Instruction(mnemonic="LD_X_iii",
+                opcode="1001_000d_dddd_1110",
+                operation="Set16(m->X_H, m->X_L, Get16(m->X_H, m->X_L) - 1);",
+                writeback="m->R[d] = GetDataMem(m, Get16(m->X_H, m->X_L));"
+                ),  # Bit of a hack reordering here but fine as no checks
+    Instruction(mnemonic="LD_Y_i",
+                opcode="1000_000d_dddd_1000",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Y_H, m->Y_L));"),
+    Instruction(mnemonic="LD_Y_ii",
+                opcode="1001_000d_dddd_1001",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Y_H, m->Y_L));",
+                writeback="Set16(m->Y_H, m->Y_L, Get16(m->Y_H, m->Y_L) + 1);"),
+    Instruction(mnemonic="LD_Y_iii",
+                opcode="1001_000d_dddd_1010",
+                operation="Set16(m->Y_H, m->Y_L, Get16(m->Y_H, m->Y_L) - 1);",
+                writeback="m->R[d] = GetDataMem(m, Get16(m->Y_H, m->Y_L));"
+                ),  # Bit of a hack reordering here but fine as no checks
+    Instruction(mnemonic="LD_Y_iv",
+                opcode="10q0_qq0d_dddd_1qqq",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Y_H, m->Y_L) + q);"),
+    Instruction(mnemonic="LD_Z_i",
+                opcode="1000_000d_dddd_1000",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));"),
+    Instruction(mnemonic="LD_Z_ii",
+                opcode="1001_000d_dddd_1001",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));",
+                writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
+    Instruction(mnemonic="LD_Z_iii",
+                opcode="1001_000d_dddd_1010",
+                operation="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) - 1);",
+                writeback="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L));"
+                ),  # Bit of a hack reordering here but fine as no checks
+    Instruction(mnemonic="LD_Z_iv",
+                opcode="10q0_qq0d_dddd_1qqq",
+                operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L) + q);"),
+    Instruction(mnemonic="LDI", opcode="1110_KKKK_dddd_KKKK", operation="m->R[0x10 + d] = K;"),
+    Instruction(mnemonic="LPM_i",
+                opcode="1001_0101_1100_1000",
+                operation="m->R[0] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"),
+    Instruction(mnemonic="LPM_ii",
+                opcode="1001_000d_dddd_0100",
+                operation="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));",
+                writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
+    Instruction(mnemonic="LPM_iii",
+                opcode="1001_000d_dddd_0101",
+                operation="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) - 1);",
+                writeback="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"
+                ),  # Bit of a hack reordering here but fine as no checks
+    Instruction(mnemonic="LSL",
+                opcode="0000_11rd_dddd_rrrr",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd << 1;",
+                writeback="m->R[d] = R;",
+                precondition="r == d",
+                flag_h="Rd3",
+                flag_s="N ^ V",
+                flag_v="N ^ C",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd7"),
+    Instruction(mnemonic="LSR",
+                opcode="1001_010d_dddd_0110",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd >> 1;",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="N ^ C",
+                flag_n="0",
+                flag_z="_",
+                flag_c="Rd0"),
+    Instruction(mnemonic="MOV", opcode="0010_11rd_dddd_rrrr", operation="m->R[d] = m->R[r];"),
+    Instruction(mnemonic="MOVW",
+                opcode="0000_0001_dddd_rrrr",
+                operation="m->R[(d<<1) + 1] = m->R[(r<<1) + 1];",
+                writeback="m->R[d<<1] = m->R[r<<1];"),
+    Instruction(mnemonic="MUL",
+                opcode="1001_11rd_dddd_rrrr",
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg16 R = Rd * Rr;",
+                writeback="Set16(m->R[1], m->R[0], R);",
+                flag_c="R15",
+                flag_z="_"),
+    Instruction(mnemonic="NEG",
+                opcode="1001_010d_dddd_0001",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = 0x00 - Rd;",
+                writeback="m->R[d] = R;",
+                flag_h="R3 | Rd3",
+                flag_s="N ^ V",
+                flag_v="R7 & !R6 & !R5 & !R4 & !R3 & !R2 & !R1 & !R0",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="R ^ 0x00"),
+    Instruction(mnemonic="NOP", opcode="0000_0000_0000_0000", operation="UNUSED(m);"),
+    Instruction(
+        mnemonic="OR",
+        opcode="0010_10rd_dddd_rrrr",
+        reads=(("R", "d", 8), ("R", "r", 8)),
+        operation="const Reg8 R = Rd | Rr;",
+        writeback="m->R[d] = R;",
+        flag_s="N ^ V",
+        flag_v="0",
+        flag_n="R7",
+        flag_z="_",
+    ),
+    Instruction(
+        mnemonic="ORI",
+        opcode="0110_KKKK_dddd_KKKK",
+        operation="const Reg8 R = m->R[d + 0x10] | K;",
+        writeback="m->R[d + 0x10] = R;",
+        flag_s="N ^ V",
+        flag_v="0",
+        flag_n="R7",
+        flag_z="_",
+    ),
+    Instruction(mnemonic="OUT", opcode="1011_1AAr_rrrr_AAAA", operation="m->IO[A] = m->R[r];"),
+    Instruction(mnemonic="RJMP",
+                opcode="1100_kkkk_kkkk_kkkk",
+                operation="m->PC = (m->PC + (k - 2048)) & PC_MASK;"),
+    Instruction(mnemonic="ROL",
+                opcode="0001_11rd_dddd_rrrr",
+                reads=(("R", "d", 8), ),
+                precondition="r == d",
+                operation="const Reg8 R = (Rd << 1) | (C ? 1 : 0);",
+                writeback="m->R[d] = R;",
+                flag_h="Rd3",
+                flag_s="N ^ V",
+                flag_v="N ^ C",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd7"),
+    Instruction(mnemonic="ROR",
+                opcode="1001_010d_dddd_0111",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = (Rd >> 1) | (C ? 0x80 : 0);",
+                writeback="m->R[d] = R;",
+                flag_s="N ^ V",
+                flag_v="N ^ C",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="Rd0"),
+    Instruction(mnemonic="SBC",
+                opcode="0000_10rd_dddd_rrrr",
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd - Rr - (C ? 1 : 0);",
+                writeback="m->R[d] = R;",
+                flag_h="!Rd3 & Rr3 | Rr3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !Rr7 & !R7 | !Rd7 & Rr7 & R7",
+                flag_n="R7",
+                flag_z="(R == 0) && (Z ^ 0)",
+                flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="SBCI",
+                opcode="0100_KKKK_dddd_KKKK",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = m->R[d + 0x10] - K - (C ? 1 : 0);",
+                writeback="m->R[d + 0x10] = R;",
+                flag_h="!Rd3 & K3 | K3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !K7 & !R7 | !Rd7 & K7 & R7",
+                flag_n="R7",
+                flag_z="(R == 0) && (Z ^ 0)",
+                flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="SBI",
+                opcode="1001_1010_AAAA_Abbb",
+                operation="m->IO[A] = SetBit(m->IO[A], b);"),
+    Instruction(mnemonic="SBIC",
+                opcode="1001_1001_AAAA_Abbb",
+                operation="if(!TestBit(m->IO[A], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+    Instruction(mnemonic="SBIS",
+                opcode="1001_1001_AAAA_Abbb",
+                operation="if(TestBit(m->IO[A], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+    Instruction(mnemonic="SBRC",
+                opcode="1111_110r_rrrr_0bbb",
+                operation="if(!TestBit(m->R[r], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+    Instruction(mnemonic="SBRS",
+                opcode="1111_110r_rrrr_0bbb",
+                operation="if(TestBit(m->R[r], b)) m->PC = (m->PC + 1) % PC_MASK;"),
+    Instruction(mnemonic="ST_X_i",
+                opcode="1001_001r_rrrr_1100",
+                operation="SetDataMem(m, Get16(m->X_H, m->X_L), m->R[r]);"),
+    Instruction(mnemonic="ST_X_ii",
+                opcode="1001_001r_rrrr_1101",
+                operation="SetDataMem(m, Get16(m->X_H, m->X_L), m->R[r]);",
+                writeback="Set16(m->X_H, m->X_L, Get16(m->X_H, m->X_L) + 1);"),
+    Instruction(mnemonic="ST_X_iii",
+                opcode="1001_001r_rrrr_1110",
+                operation="Set16(m->X_H, m->X_L, Get16(m->X_H, m->X_L) - 1);",
+                writeback="SetDataMem(m, Get16(m->X_H, m->X_L), m->R[r]);"),
+    Instruction(mnemonic="ST_Y_i",
+                opcode="1000_001r_rrrr_1000",
+                operation="SetDataMem(m, Get16(m->Y_H, m->Y_L), m->R[r]);"),
+    Instruction(mnemonic="ST_Y_ii",
+                opcode="1001_001r_rrrr_1001",
+                operation="SetDataMem(m, Get16(m->Y_H, m->Y_L), m->R[r]);",
+                writeback="Set16(m->Y_H, m->Y_L, Get16(m->Y_H, m->Y_L) + 1);"),
+    Instruction(mnemonic="ST_Y_iii",
+                opcode="1001_001r_rrrr_1010",
+                operation="Set16(m->Y_H, m->Y_L, Get16(m->Y_H, m->Y_L) - 1);",
+                writeback="SetDataMem(m, Get16(m->Y_H, m->Y_L), m->R[r]);"),
+    Instruction(mnemonic="ST_Y_iv",
+                opcode="10q0_qq1r_rrrr_1qqq",
+                operation="SetDataMem(m, Get16(m->Y_H, m->Y_L) + q, m->R[r]);"),
+    Instruction(mnemonic="ST_Z_i",
+                opcode="1000_001r_rrrr_0000",
+                operation="SetDataMem(m, Get16(m->Z_H, m->Z_L), m->R[r]);"),
+    Instruction(mnemonic="ST_Z_ii",
+                opcode="1001_001r_rrrr_0001",
+                operation="SetDataMem(m, Get16(m->Z_H, m->Z_L), m->R[r]);",
+                writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
+    Instruction(mnemonic="ST_Z_iii",
+                opcode="1001_001r_rrrr_0010",
+                operation="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) - 1);",
+                writeback="SetDataMem(m, Get16(m->Z_H, m->Z_L), m->R[r]);"),
+    Instruction(mnemonic="ST_Z_iv",
+                opcode="10q0_qq1r_rrrr_0qqq",
+                operation="SetDataMem(m, Get16(m->Z_H, m->Z_L) + q, m->R[r]);"),
+    Instruction(mnemonic="SUB",
+                opcode="0001_10rd_dddd_rrrr",
+                reads=(("R", "d", 8), ("R", "r", 8)),
+                operation="const Reg8 R = Rd - Rr;",
+                writeback="m->R[d] = R;",
+                flag_h="!Rd3 & Rr3 | Rr3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !Rr7 & !R7 | !Rd7 & Rr7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="SUBI",
+                opcode="0101_KKKK_dddd_KKKK",
+                reads=(("R", "d", 8), ),
+                operation="const Reg8 R = Rd - K;",
+                writeback="m->R[d] = R;",
+                flag_h="!Rd3 & K3 | K3 & R3 | R3 & !Rd3",
+                flag_s="N ^ V",
+                flag_v="Rd7 & !K7 & !R7 | !Rd7 & K7 & R7",
+                flag_n="R7",
+                flag_z="_",
+                flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
+    Instruction(mnemonic="SWAP",
+                opcode="1001_010d_dddd_0010",
+                operation="m->R[d] = ((m->R[d] << 4) & 0x0f) | (m->R[d] << 4);"),
 )
 
 
 def generate_instructions():
     yield "#include \"instructions.h\""
     yield ""
+    yield "/* GENERATED CODE */"
+    yield "/* This code should be compiled with compiler optimisations turned on. */"
+    yield ""
     for instruction in INSTRUCTIONS:
         yield from instruction.code
         yield ""
+    yield "void decode_and_execute_instruction(Mem16 opcode, Machine *m) {"
+    first = True
+    for instruction in INSTRUCTIONS:
+        yield indented("{}if ((opcode & {m}) == {s})".format("" if first else "else ",
+                                                             m=instruction.mask,
+                                                             s=instruction.signature))
+        first = False
+        yield indented("{")
+        yield indented("instruction_{}(opcode, m);".format(instruction.mnemonic.lower()),
+                       indent_depth=2)
+        yield indented("}")
+    yield "}"
+    yield ""
 
 
 def main():
+    for instruction_1 in INSTRUCTIONS:
+        for instruction_2 in INSTRUCTIONS:
+            if instruction_1 == instruction_2:
+                continue
+            if (instruction_1.signature == instruction_2.signature) and (instruction_1.mask == instruction_2.mask):
+                print("Warning: instruction collision of {} and {}".format(
+                    instruction_1.mnemonic, instruction_2.mnemonic))
     output_path = path.join(os.getcwd(), "src", "instructions.c")
     with open(output_path, "w") as fd:
         fd.write("\r\n".join(generate_instructions()))
