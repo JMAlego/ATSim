@@ -234,9 +234,12 @@ class Instruction:
 
     @property
     def code(self):
-        yield "static inline void instruction_{}(Mem16 opcode, Machine *m)".format(
+        yield "static inline void instruction_{}(Machine *m, Mem16 opcode)".format(
             self.mnemonic.lower())
         yield "{"
+        yield "#ifdef DEBUG_PRINT_MNEMONICS"
+        yield indented('puts("{} {}");'.format(self.mnemonic, self.plain_opcode))
+        yield "#endif"
         if any(self.variables):
             yield indented("/* Extract operands from opcode. */")
         for name, variable in self.variables.items():
@@ -332,10 +335,10 @@ INSTRUCTIONS = (
                 operation="m->R[d] = m->SREG[SREG_T] ? SetBit(m->R[d], b) : ClearBit(m->R[d], b);"),
     Instruction(mnemonic="BRBC",
                 opcode="1111_01kk_kkkk_ksss",
-                operation="if(!GetStatusFlag(m, s)) m->PC = (m->PC + k) & PC_MASK;"),
+                operation="if(!GetStatusFlag(m, s)) SetPC(m, GetPC(m) + k);"),
     Instruction(mnemonic="BRBS",
                 opcode="1111_00kk_kkkk_ksss",
-                operation="if(GetStatusFlag(m, s)) m->PC = (m->PC + k) & PC_MASK;"),
+                operation="if(GetStatusFlag(m, s)) SetPC(m, GetPC(m) + k);"),
     Instruction(mnemonic="CBI",
                 opcode="1001_1000_AAAA_Abbb",
                 operation="m->IO[A] = ClearBit(m->IO[A], b);"),
@@ -401,7 +404,7 @@ INSTRUCTIONS = (
                 flag_z="_"),
     Instruction(mnemonic="IJMP",
                 opcode="1001_0100_0000_1001",
-                operation="m->PC = Get16(m->Z_H, m->Z_L) & PC_MASK;"),
+                operation="SetPC(m, Get16(m->Z_H, m->Z_L));"),
     Instruction(mnemonic="IN", opcode="1011_0AAd_dddd_AAAA", operation="m->R[d] = m->IO[A];"),
     Instruction(mnemonic="INC",
                 opcode="1001_010d_dddd_0011",
@@ -537,7 +540,7 @@ INSTRUCTIONS = (
     Instruction(mnemonic="OUT", opcode="1011_1AAr_rrrr_AAAA", operation="m->IO[A] = m->R[r];"),
     Instruction(mnemonic="RJMP",
                 opcode="1100_kkkk_kkkk_kkkk",
-                operation="m->PC = (m->PC + (k - 2048)) & PC_MASK;"),
+                operation="SetPC(m, GetPC(m) + ToSigned(k, 12));"),
     Instruction(mnemonic="ROL",
                 opcode="0001_11rd_dddd_rrrr",
                 reads=(("R", "d", 8), ),
@@ -660,7 +663,7 @@ INSTRUCTIONS = (
                 flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="SWAP",
                 opcode="1001_010d_dddd_0010",
-                operation="m->R[d] = ((m->R[d] << 4) & 0x0f) | (m->R[d] << 4);"),
+                operation="m->R[d] = ((m->R[d] << 4) & 0x0f) | ((m->R[d] & 0xf0) >> 4);"),
 )
 
 
@@ -675,7 +678,7 @@ def generate_decode_and_execute():
         else:
             instruction_tree[key].append(instruction)
 
-    yield "void decode_and_execute_instruction(Mem16 opcode, Machine *m) {"
+    yield "void decode_and_execute_instruction(Machine *m, Mem16 opcode) {"
     yield indented("const bool skip = m->SKIP;")
     first = True
     for (signature, mask), instructions in instruction_tree.items():
@@ -686,13 +689,12 @@ def generate_decode_and_execute():
         yield indented("{")
         yield indented("if (skip)", indent_depth=2)
         yield indented("{", indent_depth=2)
-        yield indented("m->PC = (m->PC + {}) % PC_MASK;".format(instructions[0].words),
-                       indent_depth=3)
+        yield indented("SetPC(m, GetPC(m) + {});".format(instructions[0].words), indent_depth=3)
         yield indented("m->SKIP = false;", indent_depth=3)
         yield indented("return;", indent_depth=3)
         yield indented("}", indent_depth=2)
         if len(instructions) == 1:
-            yield indented("instruction_{}(opcode, m);".format(instructions[0].mnemonic.lower()),
+            yield indented("instruction_{}(m, opcode);".format(instructions[0].mnemonic.lower()),
                            indent_depth=2)
         else:
             first_instruction = True
@@ -713,13 +715,18 @@ def generate_decode_and_execute():
                     else:
                         yield indented("#warning Unwanted Collision", indent_depth=2)
                 yield indented("{", indent_depth=2)
-                yield indented("instruction_{}(opcode, m);".format(instruction.mnemonic.lower()),
+                yield indented("instruction_{}(m, opcode);".format(instruction.mnemonic.lower()),
                                indent_depth=3)
                 yield indented("}", indent_depth=2)
                 first_instruction = False
                 if got_else:
                     break
         yield indented("}")
+    yield indented("else")
+    yield indented("{")
+    yield indented('printf("Warning: Instruction %02x could not be decoded!\\n", opcode);',
+                   indent_depth=2)
+    yield indented("}")
     yield "}"
     yield ""
 

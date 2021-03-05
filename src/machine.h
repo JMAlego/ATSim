@@ -1,24 +1,11 @@
 #ifndef __ATSIM_MACHINE
 #define __ATSIM_MACHINE
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-#define UNUSED(x) (void)(x)
-#ifdef CHECK_CONDITIONS
-#define PRECONDITION(x)
-#else
-#define PRECONDITION(x) UNUSED(x)
-#endif
-
-#define FLASH_SIZE (8 * 1024)
-#define EEPROM_SIZE (512)
-#define SRAM_SIZE (512)
-#define PC_MASK (FLASH_SIZE / 2 - 1)
-#define PROG_MEM_SIZE (FLASH_SIZE / 2)
-#define GP_REGISTERS 32
-#define IO_REGISTERS 64
-#define DATA_MEM_SIZE (SRAM_SIZE + IO_REGISTERS + GP_REGISTERS)
+#include <stdio.h>
+#include "config.h"
 
 typedef uint8_t Reg8;
 typedef uint8_t Mem8;
@@ -41,7 +28,7 @@ typedef uint16_t Address16;
         l = (v)&0xff;            \
     } while (0)
 
-/* This could be a bit field but single but booleans are less efficient on
+/* This could be a bit field but single bit booleans are less efficient on
    most platforms. */
 typedef enum
 {
@@ -134,9 +121,27 @@ static inline bool GetStatusFlag(Machine *m, uint8_t index)
     return m->SREG[index & 0x7];
 }
 
-#define SetBit(val, bit) (val | (0x1 << bit))
-#define GetBit(val, bit) ((val & (0x1 << bit)) >> bit)
-#define TestBit(val, bit) ((val & (0x1 << bit)) != 0)
-#define ClearBit(val, bit) (val & ~(0x1 << bit))
+static inline void SetPC(Machine *m, Address16 a)
+{
+    m->PC = a & PC_MASK;
+}
+
+static inline Address16 GetPC(Machine *m)
+{
+    return m->PC;
+}
+
+#define SetBit(val, bit) ((val) | (0x1 << (bit)))
+#define GetBit(val, bit) (((val) & (0x1 << (bit))) >> (bit))
+#define TestBit(val, bit) (((val) & (0x1 << (bit))) != 0)
+#define ClearBit(val, bit) ((val) & ~(0x1 << (bit)))
+
+#define IsNegative(val, bit_count) (((val) & ((bit_count)-1)) != 0)
+#define ToSigned(val, bit_count) (IsNegative(val, bit_count) ? -(((~(val) + 1) & ((1 << (bit_count - 1)) - 1))) : val)
+
+void machine_cycle(Machine *m);
+void run_until_halt_loop(Machine *m);
+void load_memory(Machine *m, uint8_t bytes[], size_t max);
+bool load_memory_from_file(Machine *m, const char file_name[]);
 
 #endif
