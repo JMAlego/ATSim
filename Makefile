@@ -1,6 +1,6 @@
 CC = clang
 PYTHON ?= python3
-CFLAGS ?= -std=c99 -Wall -Wextra -pedantic
+CFLAGS ?= -std=c99 -Wall -Wextra -pedantic -O3
 CFLAGS_DEPS ?= $(CFLAGS) -MMD -MP
 OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
 OBJ_PLUS = $(OBJ) obj/instructions.o

@@ -3,7 +3,7 @@
 import os
 from dataclasses import dataclass, field
 from math import ceil
-from os import path
+from os import path, write
 from typing import List, Optional, Set, Tuple
 
 try:
@@ -132,6 +132,8 @@ class Instruction:
     flag_c: Optional[str] = None
     precondition: Optional[str] = None
     words: int = 1
+    pc_post_inc: int = 1
+    var_offsets: Optional[Tuple[Tuple[str, int], ...]] = None
 
     @property
     def plain_opcode(self):
@@ -242,8 +244,23 @@ class Instruction:
         yield "#endif"
         if any(self.variables):
             yield indented("/* Extract operands from opcode. */")
+        if self.var_offsets:
+            offsets_dict = dict(self.var_offsets)
+        else:
+            offsets_dict = {}
         for name, variable in self.variables.items():
-            yield indented("const {} {} = {};".format(variable.data_type, name, variable.getter))
+            if name in offsets_dict:
+                yield indented("const {} {} = {} + {};".format(variable.data_type, name,
+                                                               variable.getter, offsets_dict[name]))
+            else:
+                yield indented("const {} {} = {};".format(variable.data_type, name,
+                                                          variable.getter))
+            yield "#ifdef DEBUG_PRINT_OPERANDS"
+            if name in ("K", ):
+                yield indented('printf("  {n} = 0x%04x\\n", {n});'.format(n=name))
+            else:
+                yield indented('printf("  {n} = %u\\n", {n});'.format(n=name))
+            yield "#endif"
         if self.precondition:
             yield indented("/* Assert preconditions. */")
             yield indented("PRECONDITION({});".format(self.precondition))
@@ -271,6 +288,9 @@ class Instruction:
             yield indented("/* Writeback flags. */")
         for check_write in self.check_writes:
             yield indented(check_write)
+        if self.pc_post_inc != 0:
+            yield indented("/* Increment PC. */")
+            yield indented("SetPC(m, GetPC(m) + {});".format(self.pc_post_inc))
         yield "}"
 
 
@@ -311,8 +331,10 @@ INSTRUCTIONS = (
     Instruction(
         mnemonic="ANDI",
         opcode="0111_KKKK_dddd_KKKK",
-        operation="const Reg8 R = m->R[d + 0x10] & K;",
-        writeback="m->R[d + 0x10] = R;",
+        var_offsets=(("d", 0x10), ),
+        reads=(("R", "d", 8), ),
+        operation="const Reg8 R = Rd & K;",
+        writeback="m->R[d] = R;",
         flag_s="N ^ V",
         flag_v="0",
         flag_n="R7",
@@ -375,6 +397,7 @@ INSTRUCTIONS = (
     Instruction(mnemonic="CPI",
                 opcode="0011_KKKK_dddd_KKKK",
                 reads=(("R", "d", 8), ),
+                var_offsets=(("d", 0x10), ),
                 operation="const Reg8 R = Rd - K;",
                 flag_h="!Rd3 & K3 | K3 & R3 | R3 & !Rd3",
                 flag_s="N ^ V",
@@ -457,7 +480,10 @@ INSTRUCTIONS = (
     Instruction(mnemonic="LD_Z_iv",
                 opcode="10q0_qq0d_dddd_0qqq",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L) + q);"),
-    Instruction(mnemonic="LDI", opcode="1110_KKKK_dddd_KKKK", operation="m->R[0x10 + d] = K;"),
+    Instruction(mnemonic="LDI",
+                opcode="1110_KKKK_dddd_KKKK",
+                var_offsets=(("d", 0x10), ),
+                operation="m->R[d] = K;"),
     Instruction(mnemonic="LPM_i",
                 opcode="1001_0101_1100_1000",
                 operation="m->R[0] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"),
@@ -530,14 +556,29 @@ INSTRUCTIONS = (
     Instruction(
         mnemonic="ORI",
         opcode="0110_KKKK_dddd_KKKK",
-        operation="const Reg8 R = m->R[d + 0x10] | K;",
-        writeback="m->R[d + 0x10] = R;",
+        var_offsets=(("d", 0x10), ),
+        reads=(("R", "d", 8), ),
+        operation="const Reg8 R = Rd | K;",
+        writeback="m->R[d] = R;",
         flag_s="N ^ V",
         flag_v="0",
         flag_n="R7",
         flag_z="_",
     ),
     Instruction(mnemonic="OUT", opcode="1011_1AAr_rrrr_AAAA", operation="m->IO[A] = m->R[r];"),
+    Instruction(mnemonic="POP", opcode="1001_000d_dddd_1111", operation="m->R[d] = PopStack8(m);"),
+    Instruction(mnemonic="PUSH",
+                opcode="1001_001d_dddd_1111",
+                reads=(("R", "d", 8), ),
+                operation="PushStack8(m, Rd);"),
+    Instruction(mnemonic="RCALL",
+                opcode="1101_kkkk_kkkk_kkkk",
+                operation="PushStack16(m, m->PC + 1);",
+                writeback="SetPC(m, GetPC(m) + ToSigned(k, 12));"),
+    Instruction(mnemonic="RET",
+                opcode="1001_0101_0000_1000",
+                operation="SetPC(m, PopStack16(m));",
+                pc_post_inc=0),
     Instruction(mnemonic="RJMP",
                 opcode="1100_kkkk_kkkk_kkkk",
                 operation="SetPC(m, GetPC(m) + ToSigned(k, 12));"),
@@ -576,9 +617,10 @@ INSTRUCTIONS = (
                 flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="SBCI",
                 opcode="0100_KKKK_dddd_KKKK",
+                var_offsets=(("d", 0x10), ),
                 reads=(("R", "d", 8), ),
-                operation="const Reg8 R = m->R[d + 0x10] - K - (C ? 1 : 0);",
-                writeback="m->R[d + 0x10] = R;",
+                operation="const Reg8 R = Rd - K - (C ? 1 : 0);",
+                writeback="m->R[d] = R;",
                 flag_h="!Rd3 & K3 | K3 & R3 | R3 & !Rd3",
                 flag_s="N ^ V",
                 flag_v="Rd7 & !K7 & !R7 | !Rd7 & K7 & R7",
@@ -652,6 +694,7 @@ INSTRUCTIONS = (
                 flag_c="!Rd7 & Rr7 | Rr7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="SUBI",
                 opcode="0101_KKKK_dddd_KKKK",
+                var_offsets=(("d", 0x10), ),
                 reads=(("R", "d", 8), ),
                 operation="const Reg8 R = Rd - K;",
                 writeback="m->R[d] = R;",

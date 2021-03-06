@@ -20,7 +20,31 @@ typedef uint16_t Address16;
 #define Z_L R[30]
 #define Z_H R[31]
 
-#define Get16(h, l) ((uint16_t)((h << 8) | l))
+#define SP_L IO[0x3D]
+#define SP_H IO[0x3E]
+
+#define SP_MIN (GP_REGISTERS + IO_REGISTERS)
+#if DATA_MEM_SIZE < ((1 << 8) + 1)
+#define SP_MASK ((1 << 8) - 1)
+#elif DATA_MEM_SIZE < ((1 << 9) + 1)
+#define SP_MASK ((1 << 9) - 1)
+#elif DATA_MEM_SIZE < ((1 << 10) + 1)
+#define SP_MASK ((1 << 10) - 1)
+#elif DATA_MEM_SIZE < ((1 << 11) + 1)
+#define SP_MASK ((1 << 11) - 1)
+#elif DATA_MEM_SIZE < ((1 << 12) + 1)
+#define SP_MASK ((1 << 12) - 1)
+#elif DATA_MEM_SIZE < ((1 << 13) + 1)
+#define SP_MASK ((1 << 13) - 1)
+#elif DATA_MEM_SIZE < ((1 << 14) + 1)
+#define SP_MASK ((1 << 14) - 1)
+#elif DATA_MEM_SIZE < ((1 << 15) + 1)
+#define SP_MASK ((1 << 15) - 1)
+#else
+#define SP_MASK ((1 << 16) - 1)
+#endif
+
+#define Get16(h, l) ((uint16_t)(((uint16_t)(h) << 8) | (uint16_t)(l)))
 #define Set16(h, l, v)           \
     do                           \
     {                            \
@@ -46,7 +70,6 @@ typedef struct
 {
     bool SREG[8];
     Reg16 PC;
-    Reg16 SP;
     Reg8 R[GP_REGISTERS];
     Reg8 IO[IO_REGISTERS];
     Mem16 FLASH[FLASH_SIZE / 2];
@@ -121,14 +144,34 @@ static inline bool GetStatusFlag(Machine *m, uint8_t index)
     return m->SREG[index & 0x7];
 }
 
-static inline void SetPC(Machine *m, Address16 a)
+#define SetPC(m, a) m->PC = ((a)&PC_MASK)
+#define GetPC(m) (m->PC)
+#define SetSP(m, a) Set16(m->SP_H, m->SP_L, ((a)&SP_MASK))
+#define GetSP(m) (Get16(m->SP_H, m->SP_L) & SP_MASK)
+
+static inline void PushStack16(Machine *m, Mem16 val)
 {
-    m->PC = a & PC_MASK;
+    SetDataMem(m, GetSP(m) - 1, val & 0xff);
+    SetDataMem(m, GetSP(m), (val >> 8) & 0xff);
+    SetSP(m, GetSP(m) - 2);
 }
 
-static inline Address16 GetPC(Machine *m)
+static inline Reg16 PopStack16(Machine *m)
 {
-    return m->PC;
+    SetSP(m, GetSP(m) + 2);
+    return GetDataMem(m, GetSP(m) - 1) | (GetDataMem(m, GetSP(m) << 8));
+}
+
+static inline void PushStack8(Machine *m, Mem8 val)
+{
+    SetDataMem(m, GetSP(m), val);
+    SetSP(m, GetSP(m) - 1);
+}
+
+static inline Reg8 PopStack8(Machine *m)
+{
+    SetSP(m, GetSP(m) + 1);
+    return GetDataMem(m, GetSP(m));
 }
 
 #define SetBit(val, bit) ((val) | (0x1 << (bit)))
@@ -136,12 +179,14 @@ static inline Address16 GetPC(Machine *m)
 #define TestBit(val, bit) (((val) & (0x1 << (bit))) != 0)
 #define ClearBit(val, bit) ((val) & ~(0x1 << (bit)))
 
-#define IsNegative(val, bit_count) (((val) & ((bit_count)-1)) != 0)
+#define IsNegative(val, bit_count) (((val) & ((1 << ((bit_count)-1)))) != 0)
 #define ToSigned(val, bit_count) (IsNegative(val, bit_count) ? -(((~(val) + 1) & ((1 << (bit_count - 1)) - 1))) : val)
 
 void machine_cycle(Machine *m);
 void run_until_halt_loop(Machine *m);
 void load_memory(Machine *m, uint8_t bytes[], size_t max);
 bool load_memory_from_file(Machine *m, const char file_name[]);
+void dump_registers(Machine *m);
+void dump_stack(Machine *m);
 
 #endif

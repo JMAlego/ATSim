@@ -17,4 +17,7 @@
 
 #define EEPROM_SIZE (512)
 
+#define DEBUG_PRINT_MNEMONICS
+// #define DEBUG_PRINT_OPERANDS
+
 #endif
