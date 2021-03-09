@@ -5,13 +5,25 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include "config.h"
+#include "mcu.h"
+
+#define UNUSED(x) (void)(x)
+#define PRECONDITION(x) UNUSED(x)
+
+#define GP_REGISTERS 32
+#define IO_REGISTERS 64
+#define PROG_MEM_SIZE_BYTES (FLASH_SIZE)
+#define PROG_MEM_SIZE (PROG_MEM_SIZE_BYTES / 2)
+#define DATA_MEM_SIZE (SRAM_SIZE + IO_REGISTERS + GP_REGISTERS)
+#define PC_MASK (PROG_MEM_SIZE - 1)
 
 typedef uint8_t Reg8;
 typedef uint8_t Mem8;
 typedef uint16_t Reg16;
 typedef uint16_t Mem16;
 typedef uint16_t Address16;
+typedef uint32_t Mem32;
+typedef uint32_t Reg32;
 
 #define X_L R[26]
 #define X_H R[27]
@@ -159,7 +171,7 @@ static inline void PushStack16(Machine *m, Mem16 val)
 static inline Reg16 PopStack16(Machine *m)
 {
     SetSP(m, GetSP(m) + 2);
-    return GetDataMem(m, GetSP(m) - 1) | (GetDataMem(m, GetSP(m) << 8));
+    return GetDataMem(m, GetSP(m) - 1) | (GetDataMem(m, GetSP(m)) << 8);
 }
 
 static inline void PushStack8(Machine *m, Mem8 val)

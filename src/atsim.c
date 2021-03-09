@@ -3,8 +3,9 @@
 
 int main(void)
 {
+    // TODO: implement 32 bit instructions like STS
     Machine m;
-    load_memory_from_file(&m, "test/simple_c/simple_c.bin");
+    load_memory_from_file(&m, "test/fib/fib.bin");
     m.PC = 0;
     m.SKIP = false;
     run_until_halt_loop(&m);

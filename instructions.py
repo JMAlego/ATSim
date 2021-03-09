@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass, field
 from math import ceil
 from os import path, write
-from typing import List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple, Union
 
 try:
     from typing import Literal  # type: ignore
@@ -82,8 +82,7 @@ class Variable:
     def data_type(self):
         return data_type(self.bit_width)
 
-    @property
-    def getter(self):
+    def generate_decoder(self, var="opcode"):
         groups = list()
         for bit in self.bits:
             found_group = False
@@ -101,13 +100,13 @@ class Variable:
             min_index = min(group)
             if min_index != 0:
                 if end_index == 0:
-                    group_strings.append("((opcode >> {}) & 0x{:x})".format(
-                        min_index - end_index, 2**len(group) - 1))
+                    group_strings.append("(({} >> {}) & 0x{:x})".format(
+                        var, min_index - end_index, 2**len(group) - 1))
                 else:
-                    group_strings.append("((opcode >> {}) & (0x{:x} << {}))".format(
-                        min_index - end_index, 2**len(group) - 1, end_index))
+                    group_strings.append("(({} >> {}) & (0x{:x} << {}))".format(
+                        var, min_index - end_index, 2**len(group) - 1, end_index))
             else:
-                group_strings.append("(opcode & 0x{:x})".format(2**len(group) - 1))
+                group_strings.append("({} & 0x{:x})".format(var, 2**len(group) - 1))
             end_index += len(group)
 
         bracket_string = "{}"
@@ -133,11 +132,19 @@ class Instruction:
     precondition: Optional[str] = None
     words: int = 1
     pc_post_inc: int = 1
-    var_offsets: Optional[Tuple[Tuple[str, int], ...]] = None
+    var_offsets: Optional[Tuple[Union[Tuple[str, int], Tuple[str, int, int]], ...]] = None
+
+    @property
+    def is_32bit(self):
+        return len(self.full_plain_opcode) == 32
 
     @property
     def plain_opcode(self):
-        return self.opcode.replace("_", "")
+        return self.opcode.replace("_", "")[:16]
+
+    @property
+    def full_plain_opcode(self):
+        return self.opcode.replace("_", "")[:32]
 
     @property
     def mask(self):
@@ -152,11 +159,11 @@ class Instruction:
     @property
     def variables(self):
         result = dict()
-        unique_chars = set(filter(lambda x: x not in ("0", "1"), self.plain_opcode))
+        unique_chars = set(filter(lambda x: x not in ("0", "1"), self.full_plain_opcode))
         for c in sorted(unique_chars):
             bits = list(
-                map(lambda x: len(self.plain_opcode) - x[0] - 1,
-                    filter(lambda x: x[1] == c, enumerate(self.plain_opcode))))
+                map(lambda x: len(self.full_plain_opcode) - x[0] - 1,
+                    filter(lambda x: x[1] == c, enumerate(self.full_plain_opcode))))
             result[c] = Variable(c, bits)
         return result
 
@@ -165,11 +172,15 @@ class Instruction:
         if self.reads:
             for read in self.reads:
                 var, index, size = read
-                yield "const {} {v}{i} = m->{v}[{i}];".format(data_type(size,
-                                                                        prefix="Reg",
-                                                                        postfix=""),
-                                                              v=var,
-                                                              i=index)
+                if size <= 8:
+                    yield "const {} {v}{i} = m->{v}[{i}];".format(data_type(size,
+                                                                            prefix="Reg",
+                                                                            postfix=""),
+                                                                  v=var,
+                                                                  i=index)
+                elif size <= 16:
+                    yield "const {} {v}{i} = m->{v}[{i}] | (m->{v}[{i} + 1] << 8);".format(
+                        data_type(size, prefix="Reg", postfix=""), v=var, i=index)
 
     @property
     def checks(self):
@@ -236,25 +247,40 @@ class Instruction:
 
     @property
     def code(self):
+        yield "#ifndef INSTRUCTION_{}_MISSING".format(self.mnemonic.upper())
         yield "static inline void instruction_{}(Machine *m, Mem16 opcode)".format(
             self.mnemonic.lower())
         yield "{"
+        yield "#ifdef DEBUG_PRINT_PC"
+        yield indented('printf("PC=%04x\\n", GetPC(m));')
+        yield "#endif"
         yield "#ifdef DEBUG_PRINT_MNEMONICS"
-        yield indented('puts("{} {}");'.format(self.mnemonic, self.plain_opcode))
+        yield indented('puts("{} {}");'.format(self.mnemonic, self.full_plain_opcode))
         yield "#endif"
         if any(self.variables):
             yield indented("/* Extract operands from opcode. */")
         if self.var_offsets:
-            offsets_dict = dict(self.var_offsets)
+            offsets_dict = {k: v for k, *v in self.var_offsets}
         else:
             offsets_dict = {}
+        if self.is_32bit:
+            yield indented(
+                "const Mem32 extended_opcode = (opcode << 16) | GetProgMem(m, ((GetPC(m) + 1) & PC_MASK));"
+            )
         for name, variable in self.variables.items():
+            decoder = "const {} {} = {{}}{}{{}};".format(
+                variable.data_type, name,
+                variable.generate_decoder(var="extended_opcode" if self.is_32bit else "opcode"))
             if name in offsets_dict:
-                yield indented("const {} {} = {} + {};".format(variable.data_type, name,
-                                                               variable.getter, offsets_dict[name]))
+                add_val, *mul_val = offsets_dict[name]
+                if mul_val:
+                    mul_val = mul_val[0]
+                    yield indented(
+                        decoder.format("({} * ".format(mul_val), ") + {}".format(add_val)))
+                else:
+                    yield indented(decoder.format("", " + {}".format(add_val)))
             else:
-                yield indented("const {} {} = {};".format(variable.data_type, name,
-                                                          variable.getter))
+                yield indented(decoder.format("", ""))
             yield "#ifdef DEBUG_PRINT_OPERANDS"
             if name in ("K", ):
                 yield indented('printf("  {n} = 0x%04x\\n", {n});'.format(n=name))
@@ -292,6 +318,16 @@ class Instruction:
             yield indented("/* Increment PC. */")
             yield indented("SetPC(m, GetPC(m) + {});".format(self.pc_post_inc))
         yield "}"
+        yield "#else"
+        yield "static inline void instruction_{}(Machine *m, Mem16 opcode)".format(
+            self.mnemonic.lower())
+        yield "{"
+        yield indented("UNUSED(opcode);")
+        yield indented("UNUSED(m);")
+        yield indented('puts("Warning: Instruction {} not present on MCU");'.format(
+            self.mnemonic.upper()))
+        yield "}"
+        yield "#endif"
 
 
 INSTRUCTIONS = (
@@ -317,6 +353,17 @@ INSTRUCTIONS = (
                 flag_n="R7",
                 flag_z="_",
                 flag_c="Rd7 & Rr7 | Rr7 & !R7 | !R7 & Rd7"),
+    Instruction(mnemonic="ADIW",
+                opcode="1001_0110_KKdd_KKKK",
+                var_offsets=(("d", 24, 2), ),
+                reads=(("R", "d", 16), ),
+                operation="const Reg16 R = Rd + K;",
+                writeback="Set16(m->R[d+1], m->R[d], R);",
+                flag_s="N ^ V",
+                flag_v="R15 & !Rd15",
+                flag_n="R15",
+                flag_z="_",
+                flag_c="!R15 & Rd15"),
     Instruction(
         mnemonic="AND",
         opcode="0010_00rd_dddd_rrrr",
@@ -357,10 +404,15 @@ INSTRUCTIONS = (
                 operation="m->R[d] = m->SREG[SREG_T] ? SetBit(m->R[d], b) : ClearBit(m->R[d], b);"),
     Instruction(mnemonic="BRBC",
                 opcode="1111_01kk_kkkk_ksss",
-                operation="if(!GetStatusFlag(m, s)) SetPC(m, GetPC(m) + k);"),
+                operation="if(!GetStatusFlag(m, s)) SetPC(m, GetPC(m) + ToSigned(k, 7));"),
     Instruction(mnemonic="BRBS",
                 opcode="1111_00kk_kkkk_ksss",
-                operation="if(GetStatusFlag(m, s)) SetPC(m, GetPC(m) + k);"),
+                operation="if(GetStatusFlag(m, s)) SetPC(m, GetPC(m) + ToSigned(k, 7));"),
+    Instruction(mnemonic="CALL",
+                opcode="1001_010k_kkkk_111k_kkkk_kkkk_kkkk_kkkk",
+                operation="PushStack16(m, m->PC + 2);",
+                writeback="SetPC(m, k);",
+                pc_post_inc=0),
     Instruction(mnemonic="CBI",
                 opcode="1001_1000_AAAA_Abbb",
                 operation="m->IO[A] = ClearBit(m->IO[A], b);"),
@@ -438,6 +490,10 @@ INSTRUCTIONS = (
                 flag_v="R7 & !R6 & !R5 & !R4 & !R3 & !R2 & !R1 & !R0",
                 flag_n="R7",
                 flag_z="_"),
+    Instruction(mnemonic="JMP",
+                opcode="1001_010k_kkkk_110k_kkkk_kkkk_kkkk_kkkk",
+                operation="SetPC(m, k);",
+                pc_post_inc=2),
     Instruction(mnemonic="LD_X_i",
                 opcode="1001_000d_dddd_1100",
                 operation="m->R[d] = GetDataMem(m, Get16(m->X_H, m->X_L));"),
@@ -480,6 +536,10 @@ INSTRUCTIONS = (
     Instruction(mnemonic="LD_Z_iv",
                 opcode="10q0_qq0d_dddd_0qqq",
                 operation="m->R[d] = GetDataMem(m, Get16(m->Z_H, m->Z_L) + q);"),
+    Instruction(mnemonic="LDS",
+                opcode="1001_000d_dddd_0000_kkkk_kkkk_kkkk_kkkk",
+                operation="m->R[d] = GetDataMem(m, k);",
+                pc_post_inc=2),
     Instruction(mnemonic="LDI",
                 opcode="1110_KKKK_dddd_KKKK",
                 var_offsets=(("d", 0x10), ),
@@ -636,6 +696,17 @@ INSTRUCTIONS = (
     Instruction(mnemonic="SBIS",
                 opcode="1001_1011_AAAA_Abbb",
                 operation="if(TestBit(m->IO[A], b)) m->SKIP = true;"),
+    Instruction(mnemonic="SBIW",
+                opcode="1001_0111_KKdd_KKKK",
+                var_offsets=(("d", 24, 2), ),
+                reads=(("R", "d", 16), ),
+                operation="const Reg16 R = Rd - K;",
+                writeback="Set16(m->R[d+1], m->R[d], R);",
+                flag_s="N ^ V",
+                flag_v="!R15 & Rd15",
+                flag_n="R15",
+                flag_z="_",
+                flag_c="R15 & !Rd15"),
     Instruction(mnemonic="SBRC",
                 opcode="1111_110r_rrrr_0bbb",
                 operation="if(!TestBit(m->R[r], b)) m->SKIP = true;"),
@@ -681,6 +752,10 @@ INSTRUCTIONS = (
     Instruction(mnemonic="ST_Z_iv",
                 opcode="10q0_qq1r_rrrr_0qqq",
                 operation="SetDataMem(m, Get16(m->Z_H, m->Z_L) + q, m->R[r]);"),
+    Instruction(mnemonic="STS",
+                opcode="1001_001r_rrrr_0000_kkkk_kkkk_kkkk_kkkk",
+                operation="SetDataMem(m, k, m->R[r]);",
+                pc_post_inc=2),
     Instruction(mnemonic="SUB",
                 opcode="0001_10rd_dddd_rrrr",
                 reads=(("R", "d", 8), ("R", "r", 8)),
@@ -743,7 +818,7 @@ def generate_decode_and_execute():
             first_instruction = True
             for name, variable in instructions[0].variables.items():
                 yield indented("const {} {} = {};".format(variable.data_type, name,
-                                                          variable.getter),
+                                                          variable.generate_decoder()),
                                indent_depth=2)
             for instruction in instructions:
                 got_else = False
@@ -767,8 +842,9 @@ def generate_decode_and_execute():
         yield indented("}")
     yield indented("else")
     yield indented("{")
-    yield indented('printf("Warning: Instruction %02x could not be decoded!\\n", opcode);',
-                   indent_depth=2)
+    yield indented(
+        'printf("Warning: Instruction %04x at PC=%04x could not be decoded!\\n", opcode, GetPC(m));',
+        indent_depth=2)
     yield indented("}")
     yield "}"
     yield ""
