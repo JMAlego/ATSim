@@ -105,6 +105,32 @@ static inline void SetProgMem(Machine *m, Address16 a, Mem16 v)
     m->FLASH[a % PROG_MEM_SIZE] = v;
 }
 
+static inline Mem8 PackSREG(Machine *m)
+{
+    Mem8 SREG = 0;
+    SREG |= m->SREG[SREG_I] ? 128 : 0;
+    SREG |= m->SREG[SREG_T] ? 64 : 0;
+    SREG |= m->SREG[SREG_H] ? 32 : 0;
+    SREG |= m->SREG[SREG_S] ? 16 : 0;
+    SREG |= m->SREG[SREG_V] ? 8 : 0;
+    SREG |= m->SREG[SREG_N] ? 4 : 0;
+    SREG |= m->SREG[SREG_Z] ? 2 : 0;
+    SREG |= m->SREG[SREG_C] ? 1 : 0;
+    return SREG;
+}
+
+static inline void UnpackSREG(Machine *m, Mem8 SREG)
+{
+    m->SREG[SREG_I] = (SREG & 128) != 0;
+    m->SREG[SREG_T] = (SREG & 64) != 0;
+    m->SREG[SREG_H] = (SREG & 32) != 0;
+    m->SREG[SREG_S] = (SREG & 16) != 0;
+    m->SREG[SREG_V] = (SREG & 8) != 0;
+    m->SREG[SREG_N] = (SREG & 4) != 0;
+    m->SREG[SREG_Z] = (SREG & 2) != 0;
+    m->SREG[SREG_C] = (SREG & 1) != 0;
+}
+
 static inline Mem8 GetDataMem(Machine *m, Address16 a)
 {
     const Address16 b = a % DATA_MEM_SIZE;
@@ -114,6 +140,10 @@ static inline Mem8 GetDataMem(Machine *m, Address16 a)
     }
     else if (b < GP_REGISTERS + IO_REGISTERS)
     {
+        if (b == 0x3F)
+        {
+            return PackSREG(m);
+        }
         return m->IO[(b - GP_REGISTERS) % IO_REGISTERS];
     }
     else if (b < GP_REGISTERS + IO_REGISTERS + SRAM_SIZE)
@@ -133,6 +163,10 @@ static inline void SetDataMem(Machine *m, Address16 a, Mem8 v)
     }
     else if (b < GP_REGISTERS + IO_REGISTERS)
     {
+        if (b == 0x3F)
+        {
+            UnpackSREG(m, v);
+        }
         m->IO[(b - GP_REGISTERS) % IO_REGISTERS] = v;
     }
     else if (b < GP_REGISTERS + IO_REGISTERS + SRAM_SIZE)
