@@ -74,3 +74,118 @@ bool load_memory_from_file(Machine *m, const char file_name[])
 
     return true;
 }
+
+static char _read_char_from_set(const char message[], const char chars[], size_t chars_len)
+{
+    char read_char = '\0';
+    while (true)
+    {
+        puts(message);
+        scanf(" %c", &read_char);
+        for (size_t i = 0; i < chars_len; i++)
+        {
+            if (read_char == chars[i])
+            {
+                return chars[i];
+            }
+        }
+    }
+}
+
+#define read_char_from_set(message, chars) _read_char_from_set(message, chars, sizeof(chars) / sizeof(char))
+#define stringify(a) #a
+
+void interactive_view(Machine *m)
+{
+    const char VALID_OPERATIONS[9] = {'d', 'p', 'r', 'i', 'b', 'w', 'X', 'Y', 'Z'};
+    while (true)
+    {
+        const char read_char = read_char_from_set("view [back=b, data=d, data word=w, program=p, io=i, register=r,X,Y,Z] ",
+                                                  VALID_OPERATIONS);
+        uint16_t address = 0;
+        if (read_char == 'd')
+        {
+            printf("address [0-%u]\n", DATA_MEM_SIZE - 1);
+            scanf(" %hu", &address);
+            address = address % DATA_MEM_SIZE;
+            printf("DS[%u] = 0x%02x\n", address, GetDataMem(m, address));
+        }
+        else if (read_char == 'w')
+        {
+            printf("address [0-%u]\n", DATA_MEM_SIZE - 1);
+            scanf(" %hu", &address);
+            address = address % DATA_MEM_SIZE;
+            printf("DS[%u:%u] = 0x%04x\n",
+                   (address + 1) % DATA_MEM_SIZE,
+                   address,
+                   Get16(GetDataMem(m, (address + 1) % DATA_MEM_SIZE), GetDataMem(m, address)));
+        }
+        else if (read_char == 'p')
+        {
+            printf("address [0-%u]\n", PROG_MEM_SIZE - 1);
+            scanf(" %hu", &address);
+            address = address % PROG_MEM_SIZE;
+            printf("PS[%u] = 0x%04x\n", address, GetProgMem(m, address));
+        }
+        else if (read_char == 'i')
+        {
+            printf("address [0-%u]\n", IO_REGISTERS - 1);
+            scanf(" %hu", &address);
+            address = address % IO_REGISTERS;
+            printf("IO[%u] = 0x%02x\n", address, m->IO[address]);
+        }
+        else if (read_char == 'r')
+        {
+            printf("address [0-%u]\n", GP_REGISTERS - 1);
+            scanf(" %hu", &address);
+            address = address % GP_REGISTERS;
+            printf("R[%u] = 0x%02x\n", address, m->R[address]);
+        }
+        else if (read_char == 'X')
+        {
+            printf("R[X] = 0x%04x\n", Get16(m->X_H, m->X_L));
+        }
+        else if (read_char == 'Y')
+        {
+            printf("R[Y] = 0x%04x\n", Get16(m->Y_H, m->Y_L));
+        }
+        else if (read_char == 'Z')
+        {
+            printf("R[Z] = 0x%04x\n", Get16(m->Z_H, m->Z_L));
+        }
+        else if (read_char == 'b')
+        {
+            return;
+        }
+    }
+}
+
+void interactive_break(Machine *m)
+{
+    const char VALID_OPERATIONS[4] = {'c', 'd', 'v', 'e'};
+    bool continue_debug = true;
+
+    printf("BREAK at PC=0x%04x\n", m->PC);
+
+    while (continue_debug)
+    {
+        const char read_char = read_char_from_set("break [exit=e, continue=c, dump=d, view=v] ", VALID_OPERATIONS);
+        if (read_char == 'c')
+        {
+            continue_debug = false;
+        }
+        else if (read_char == 'd')
+        {
+            dump_registers(m);
+            dump_stack(m);
+        }
+        else if (read_char == 'v')
+        {
+            interactive_view(m);
+        }
+        else if (read_char == 'e')
+        {
+            exit(0);
+        }
+    }
+}

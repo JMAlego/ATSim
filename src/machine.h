@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "mcu.h"
 
 #define UNUSED(x) (void)(x)
@@ -234,5 +235,6 @@ void load_memory(Machine *m, uint8_t bytes[], size_t max);
 bool load_memory_from_file(Machine *m, const char file_name[]);
 void dump_registers(Machine *m);
 void dump_stack(Machine *m);
+void interactive_break(Machine *m);
 
 #endif

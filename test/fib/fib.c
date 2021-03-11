@@ -16,7 +16,6 @@ uint16_t fib(uint8_t n)
 
 void main(void)
 {
-
     *((uint16_t*) 0x1) = fib(24);
 
     while(1){}

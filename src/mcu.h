@@ -18,6 +18,36 @@
 
 #endif
 
+#ifdef MCU_ATTiny45
+
+#define MCU "ATTiny45"
+#define CORE_TYPE_AVRe
+
+#define FLASH_SIZE (4 * 1024)
+#define SRAM_SIZE 256
+#define EEPROM_SIZE 256
+
+#define INSTRUCTION_CALL_MISSING
+#define INSTRUCTION_JMP_MISSING
+#define INSTRUCTION_ELPM_MISSING
+
+#endif
+
+#ifdef MCU_ATTiny25
+
+#define MCU "ATTiny25"
+#define CORE_TYPE_AVRe
+
+#define FLASH_SIZE (2 * 1024)
+#define SRAM_SIZE 128
+#define EEPROM_SIZE 128
+
+#define INSTRUCTION_CALL_MISSING
+#define INSTRUCTION_JMP_MISSING
+#define INSTRUCTION_ELPM_MISSING
+
+#endif
+
 #ifdef CORE_TYPE_AVR
 #define INSTRUCTION_BREAK_MISSING
 #define INSTRUCTION_CALL_MISSING

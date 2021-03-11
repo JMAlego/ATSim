@@ -408,6 +408,7 @@ INSTRUCTIONS = (
     Instruction(mnemonic="BRBS",
                 opcode="1111_00kk_kkkk_ksss",
                 operation="if(GetStatusFlag(m, s)) SetPC(m, GetPC(m) + ToSigned(k, 7));"),
+    Instruction(mnemonic="BREAK", opcode="1001_0101_1001_1000", operation="interactive_break(m);"),
     Instruction(mnemonic="CALL",
                 opcode="1001_010k_kkkk_111k_kkkk_kkkk_kkkk_kkkk",
                 operation="PushStack16(m, m->PC + 2);",
