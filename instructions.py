@@ -1,22 +1,46 @@
 #!/usr/bin/env python3.7
+"""Generate instructions.
 
-import os
-from dataclasses import dataclass, field
+Writing every instruction by hand would be time consuming and repetitive in C,
+so instead we generate the instructions using Python.
+
+The generated instruction implementations are optimised for compiler input not
+for readability, as such the output code is rather ugly/contains strange
+seemingly pointless intermediary states etc.
+"""
+
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
+from dataclasses import dataclass
 from math import ceil
-from os import path, write
-from typing import List, Optional, Set, Tuple, Union
+from os import path
+from sys import stderr
+from typing import List, Optional, Tuple, Union
 
 try:
     from typing import Literal  # type: ignore
 except ImportError:
     from typing_extensions import Literal  # type: ignore
 
+DEFAULT_OUT_PATH = path.join(path.dirname(__file__), "src", "instructions.c")
+DEFAULT_LINE_TERMINATOR = "\r\n"
+LINE_TERMINATORS = {
+    "rn": "\r\n",
+    "n": "\n",
+    "r": "\r",
+    "nr": "\n\r"  # What are you, some kind of monster?
+}
+
 
 def indented(to_indent: str, indent_depth: int = 1, indent_chars: str = "    ") -> str:
+    """Indent the input string."""
     return "{}{}".format(indent_chars * indent_depth, to_indent)
 
 
 def flag_logic(logic_string, result_var, machine="m"):
+    """Expand simplistic flag logic.
+
+    TODO: improve parsing so it's not so ugly.
+    """
     if not set(logic_string).difference(set("0123456789")):
         yield "{} = {};".format(result_var, logic_string)
         return
@@ -59,6 +83,7 @@ def flag_logic(logic_string, result_var, machine="m"):
 
 
 def data_type(bit_width, prefix="uint", postfix="_t"):
+    """Return a datatype based on a target bit width."""
     size = 64
     if bit_width <= 8:
         size = 8
@@ -71,18 +96,23 @@ def data_type(bit_width, prefix="uint", postfix="_t"):
 
 @dataclass
 class Variable:
+    """Represents a variable in an opcode."""
+
     name: str
     bits: List[int]
 
     @property
     def bit_width(self):
+        """Variable bit width."""
         return ceil(len(self.bits) / 8.0) * 8
 
     @property
     def data_type(self):
+        """Get data type required to store variable."""
         return data_type(self.bit_width)
 
     def generate_decoder(self, var="opcode"):
+        """Generate the C code to decode the variable from an opcode."""
         groups = list()
         for bit in self.bits:
             found_group = False
@@ -118,6 +148,11 @@ class Variable:
 
 @dataclass
 class Instruction:
+    """Represents an instruction.
+
+    TODO: consider different representsation as tonnes of arguments.
+    """
+
     mnemonic: str
     opcode: str
     operation: str
@@ -130,34 +165,51 @@ class Instruction:
     flag_z: Optional[str] = None
     flag_c: Optional[str] = None
     precondition: Optional[str] = None
-    words: int = 1
     pc_post_inc: int = 1
     var_offsets: Optional[Tuple[Union[Tuple[str, int], Tuple[str, int, int]], ...]] = None
 
     @property
     def is_32bit(self):
+        """Return true if this is a double width instruction, false otherwise."""
         return len(self.full_plain_opcode) == 32
 
     @property
+    def words(self):
+        """Get number of words in this instruction."""
+        return 2 if self.is_32bit else 1
+
+    @property
     def plain_opcode(self):
+        """Get plain 16bit opcode."""
         return self.opcode.replace("_", "")[:16]
 
     @property
     def full_plain_opcode(self):
+        """Get plain full opcode.
+
+        This should give 16bits if the instruction is 16 bits, 32 bits if the
+        instruction is 32 bits, so on.
+        """
         return self.opcode.replace("_", "")[:32]
 
     @property
     def mask(self):
+        """Get bitwise and mask of instruction signature."""
         bits = "".join("1" if x in ("0", "1") else "0" for x in self.plain_opcode)
         return "0x{:04x}".format(int(bits, 2))
 
     @property
     def signature(self):
+        """Get instruction signature.
+
+        This is the value of all bits which are not variable in the opcode.
+        """
         bits = "".join(x if x in ("0", "1") else "0" for x in self.plain_opcode)
         return "0x{:04x}".format(int(bits, 2))
 
     @property
     def variables(self):
+        """Get all variables in this instruction's opcode."""
         result = dict()
         unique_chars = set(filter(lambda x: x not in ("0", "1"), self.full_plain_opcode))
         for c in sorted(unique_chars):
@@ -169,6 +221,7 @@ class Instruction:
 
     @property
     def var_reads(self):
+        """Get the code to read from registers so on as needed by this instruction."""
         if self.reads:
             for read in self.reads:
                 var, index, size = read
@@ -184,6 +237,7 @@ class Instruction:
 
     @property
     def checks(self):
+        """Get the code to perform all post-operation flag checks."""
         if self.flag_n:
             yield from flag_logic(self.flag_n, "N")
 
@@ -207,6 +261,7 @@ class Instruction:
 
     @property
     def check_reads(self):
+        """Get the code to perform pre-operation flag reads."""
         if self.flag_c:
             yield "bool C = m->SREG[SREG_C];"
 
@@ -227,6 +282,7 @@ class Instruction:
 
     @property
     def check_writes(self):
+        """Get the code to perform post-operation flag writes."""
         if self.flag_c:
             yield "m->SREG[SREG_C] = C;"
 
@@ -247,26 +303,40 @@ class Instruction:
 
     @property
     def code(self):
+        """Get the function which performs this instruction's operation."""
+        # Macro to allow removal of instruction in C code
         yield "#ifndef INSTRUCTION_{}_MISSING".format(self.mnemonic.upper())
+
+        # Start of implementation
         yield "static inline void instruction_{}(Machine *m, Mem16 opcode)".format(
             self.mnemonic.lower())
         yield "{"
+
+        # Debug macro sections
         yield "#ifdef DEBUG_PRINT_PC"
         yield indented('printf("PC=%04x\\n", GetPC(m));')
         yield "#endif"
         yield "#ifdef DEBUG_PRINT_MNEMONICS"
         yield indented('puts("{} {}");'.format(self.mnemonic, self.full_plain_opcode))
         yield "#endif"
+
+        # Section heading
         if any(self.variables):
             yield indented("/* Extract operands from opcode. */")
+
+        # Get offsets if they exist
         if self.var_offsets:
             offsets_dict = {k: v for k, *v in self.var_offsets}
         else:
             offsets_dict = {}
+
+        # If this is a 32 bit instruction we need to perform a second fetch of a word from memory
         if self.is_32bit:
             yield indented(
                 "const Mem32 extended_opcode = (opcode << 16) | GetProgMem(m, ((GetPC(m) + 1) & PC_MASK));"
             )
+
+        # Code to extract variables from opcodes
         for name, variable in self.variables.items():
             decoder = "const {} {} = {{}}{}{{}};".format(
                 variable.data_type, name,
@@ -287,41 +357,76 @@ class Instruction:
             else:
                 yield indented('printf("  {n} = %u\\n", {n});'.format(n=name))
             yield "#endif"
+
+        # Macro to assert precondition if it exists for this instruction
         if self.precondition:
             yield indented("/* Assert preconditions. */")
             yield indented("PRECONDITION({});".format(self.precondition))
+
+        # Macro to mark any unused variables as "used" to avoid compiler warnings
         if not any(self.variables):
             yield indented("/* No operands in opcode so mark as unused. */")
             yield indented("UNUSED(opcode);")
+
+        # Section heading
         if any(self.var_reads):
             yield indented("/* Read vars for operation. */")
+
+        # Code to read from registers etc. where needed
         for var_read in self.var_reads:
             yield indented(var_read)
+
+        # Section heading
         if any(self.check_reads):
             yield indented("/* Read flags for operation. */")
+
+        # Read flags before operation
         for check_read in self.check_reads:
             yield indented(check_read)
+
+        # Section heading
         yield indented("/* Perform instruction operation. */")
+
+        # Perform operation of instruction
         yield indented(self.operation)
+
+        # Section heading
         if any(self.checks):
             yield indented("/* Update flags. */")
+
+        # Check for new flag states
         for check in self.checks:
             yield indented(check)
+
+        # If there a "writeback" step, perform it. Sometimes this may be used
+        # simply for multiple statement instruction implementations.
         if self.writeback:
             yield indented("/* Writeback vars. */")
             yield indented(self.writeback)
+
+        # Section heading
         if any(self.check_writes):
             yield indented("/* Writeback flags. */")
+
+        # Write flags back
         for check_write in self.check_writes:
             yield indented(check_write)
+
+        # Perform PC post increment/decrement if applicable
         if self.pc_post_inc != 0:
             yield indented("/* Increment PC. */")
             yield indented("SetPC(m, GetPC(m) + {});".format(self.pc_post_inc))
+
+        # End of implementation
         yield "}"
+
+        # If instruction is "missing" then yield no implementation.
         yield "#else"
         yield "static inline void instruction_{}(Machine *m, Mem16 opcode)".format(
             self.mnemonic.lower())
         yield "{"
+        # Produce a warning and perform no actual operation
+        # NB: this does not increment PC
         yield indented("UNUSED(opcode);")
         yield indented("UNUSED(m);")
         yield indented('puts("Warning: Instruction {} not present on MCU");'.format(
@@ -330,6 +435,7 @@ class Instruction:
         yield "#endif"
 
 
+# Instruction definitions
 INSTRUCTIONS = (
     Instruction(mnemonic="ADC",
                 opcode="0001_11rd_dddd_rrrr",
@@ -787,6 +893,8 @@ INSTRUCTIONS = (
 
 
 def generate_decode_and_execute():
+    """Generate the instruction decode and execute logic."""
+    # Build a "tree" to find non-unique instructions
     instruction_tree = {}
     for instruction in INSTRUCTIONS:
         key = (instruction.signature, instruction.mask)
@@ -800,12 +908,15 @@ def generate_decode_and_execute():
     yield "void decode_and_execute_instruction(Machine *m, Mem16 opcode) {"
     yield indented("const bool skip = m->SKIP;")
     first = True
+    # Generate decode logic
     for (signature, mask), instructions in instruction_tree.items():
         yield indented("{}if ((opcode & {m}) == {s})".format("" if first else "else ",
                                                              m=mask,
                                                              s=signature))
         first = False
         yield indented("{")
+        # If we need to skip this instruction, do so...
+        # This allows skipping of 32 bit instructions.
         yield indented("if (skip)", indent_depth=2)
         yield indented("{", indent_depth=2)
         yield indented("SetPC(m, GetPC(m) + {});".format(instructions[0].words), indent_depth=3)
@@ -832,6 +943,10 @@ def generate_decode_and_execute():
                     if not first_instruction:
                         yield indented("else", indent_depth=2)
                     else:
+                        # If we get here there's at least 2 instruction definitions which conflict
+                        # and don't disambiguate themselves with preconditions.
+                        print("Unwanted Collision: Ambiguous instructions...", file=stderr)
+                        print([instruction.mnemonic for instruction in instructions], file=stderr)
                         yield indented("#warning Unwanted Collision", indent_depth=2)
                 yield indented("{", indent_depth=2)
                 yield indented("instruction_{}(m, opcode);".format(instruction.mnemonic.lower()),
@@ -852,6 +967,7 @@ def generate_decode_and_execute():
 
 
 def generate_instructions():
+    """Generate instruction implementations."""
     yield "#include \"instructions.h\""
     yield ""
     yield "/* GENERATED CODE */"
@@ -863,14 +979,35 @@ def generate_instructions():
 
 
 def main():
-    output_path = path.join(os.getcwd(), "src", "instructions.c")
+    """Entry point function."""
+    # Setup arguments
+    argument_parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
+    argument_parser.add_argument("-o",
+                                 "--output-path",
+                                 type=str,
+                                 help="Specify the output path for the generated C file.",
+                                 default=DEFAULT_OUT_PATH)
+    argument_parser.add_argument("--line-terminator",
+                                 choices=LINE_TERMINATORS.keys(),
+                                 help="Specify the end of line terminator.",
+                                 default="rn")
+    parsed_arguments = argument_parser.parse_args()
+
+    # Read arguments
+    output_path = parsed_arguments.output_path
+    if parsed_arguments.line_terminator in LINE_TERMINATORS:
+        line_terminator = LINE_TERMINATORS[parsed_arguments.line_terminator]
+    else:
+        line_terminator = DEFAULT_LINE_TERMINATOR
+
+    # Generate file
     with open(output_path, "w") as fd:
         for line in generate_instructions():
             fd.write(line)
-            fd.write("\r\n")
+            fd.write(line_terminator)
         for line in generate_decode_and_execute():
             fd.write(line)
-            fd.write("\r\n")
+            fd.write(line_terminator)
 
 
 if __name__ == "__main__":
