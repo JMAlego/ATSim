@@ -1,4 +1,6 @@
-# Instruction Set Simulator for a subset of AVR
+# ATSim
+
+_Simple Instruction Set Simulator for a subset of AVR_
 
 ## Instructions
 
@@ -24,4 +26,4 @@ and consider the descriptions in `instructions.py` instead.
 
 This project is not affiliated with Microchip/Atmel in any way. Implementation
 is based purely on publicly available documentation for the AVR instruction set
-and MCUs which use the instruction set.
+and publicly available documentation for MCUs which use the instruction set.
