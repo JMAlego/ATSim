@@ -888,7 +888,7 @@ INSTRUCTIONS = (
                 flag_c="!Rd7 & K7 | K7 & R7 | R7 & !Rd7"),
     Instruction(mnemonic="SWAP",
                 opcode="1001_010d_dddd_0010",
-                operation="m->R[d] = ((m->R[d] << 4) & 0x0f) | ((m->R[d] & 0xf0) >> 4);"),
+                operation="m->R[d] = ((m->R[d] << 4) & 0xf0) | ((m->R[d] >> 4) & 0x0f);"),
 )
 
 
