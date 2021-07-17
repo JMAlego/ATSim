@@ -198,15 +198,15 @@ static inline bool GetStatusFlag(Machine *m, uint8_t index)
 
 static inline void PushStack16(Machine *m, Mem16 val)
 {
-    SetDataMem(m, GetSP(m) - 1, val & 0xff);
-    SetDataMem(m, GetSP(m), (val >> 8) & 0xff);
+    SetDataMem(m, GetSP(m), val & 0xff);
+    SetDataMem(m, GetSP(m) - 1, (val >> 8) & 0xff);
     SetSP(m, GetSP(m) - 2);
 }
 
 static inline Reg16 PopStack16(Machine *m)
 {
     SetSP(m, GetSP(m) + 2);
-    return GetDataMem(m, GetSP(m) - 1) | (GetDataMem(m, GetSP(m)) << 8);
+    return GetDataMem(m, GetSP(m)) | (GetDataMem(m, GetSP(m) - 1) << 8);
 }
 
 static inline void PushStack8(Machine *m, Mem8 val)

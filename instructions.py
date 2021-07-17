@@ -895,6 +895,8 @@ INSTRUCTIONS = (
 def generate_decode_and_execute():
     """Generate the instruction decode and execute logic."""
     # Build a "tree" to find non-unique instructions
+    # TODO: Add a second level to group operations that share a mask
+    # TODO: Also clean this whole function up XD
     instruction_tree = {}
     for instruction in INSTRUCTIONS:
         key = (instruction.signature, instruction.mask)
