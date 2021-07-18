@@ -1,0 +1,7 @@
+--- precondition
+m.R[16] = 0x0;
+--- test
+ldi R16,lo8(99)
+--- postcondition
+assert(m.R[16] == 99);
+assert(m.PC == 1)

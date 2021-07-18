@@ -1,0 +1,9 @@
+--- precondition
+m.R[0] = 0x0f;
+m.R[1] = 0xf1;
+--- test
+and r1,r0
+--- postcondition
+assert(m.R[0] == 0x0f);
+assert(m.R[1] == 0x01);
+assert(m.PC == 1)

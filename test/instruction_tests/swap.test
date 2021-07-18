@@ -1,0 +1,7 @@
+--- precondition
+m.R[0] = 0x48;
+--- test
+swap r0
+--- postcondition
+assert(m.R[0] == 0x84);
+assert(m.PC == 1)

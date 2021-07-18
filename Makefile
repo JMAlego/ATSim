@@ -1,5 +1,6 @@
 CC = clang
 PYTHON ?= python3
+TEST_POOL ?= 1
 CFLAGS ?= -std=c99 -Wall -Wextra -pedantic -O3
 CFLAGS_DEPS ?= $(CFLAGS) -MMD -MP
 OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
@@ -8,7 +9,7 @@ DEPS = $(OBJ:.o=.d)
 
 TARGET := atsim
 
-.PHONY: all run clean instructions
+.PHONY: all run clean instructions test
 
 all: bin/$(TARGET) $(OBJ_PLUS)
 
@@ -27,6 +28,9 @@ instructions: src/instructions.c
 
 run: bin/$(TARGET)
 	./bin/$(TARGET) $(ARGS)
+
+test:
+	$(PYTHON) test/instruction_tests.py --python=$(PYTHON) --pool=$(TEST_POOL)
 
 clean:
 	$(RM) $(OBJ)
