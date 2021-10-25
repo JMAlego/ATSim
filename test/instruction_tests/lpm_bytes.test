@@ -1,0 +1,12 @@
+--- precondition
+m.R[10] = 0x11;
+Set16(m.Z_H, m.Z_L, 1024);
+SetProgMem(&m, 512, 0x4433);
+--- test
+lpm r10,Z+
+lpm r11,Z+
+--- postcondition
+assert(m.R[10] == 0x33);
+assert(m.R[11] == 0x44);
+assert(Get16(m.Z_H, m.Z_L) == 1026);
+assert(m.PC == 2);
