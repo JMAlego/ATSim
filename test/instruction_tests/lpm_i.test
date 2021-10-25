@@ -1,0 +1,9 @@
+--- precondition
+m.R[0] = 0x11;
+Set16(m.Z_H, m.Z_L, 1024);
+SetProgMem(&m, 512, 0x4433);
+--- test
+lpm
+--- postcondition
+assert(m.R[0] == 0x33);
+assert(m.PC == 1);
