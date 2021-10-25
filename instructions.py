@@ -656,13 +656,11 @@ INSTRUCTIONS = (
                 operation="m->R[0] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"),
     Instruction(mnemonic="LPM_ii",
                 opcode="1001_000d_dddd_0100",
-                operation="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));",
-                writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
+                operation="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"),
     Instruction(mnemonic="LPM_iii",
                 opcode="1001_000d_dddd_0101",
-                operation="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) - 1);",
-                writeback="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));"
-                ),  # Bit of a hack reordering here but fine as no checks
+                operation="m->R[d] = GetProgMemByte(m, Get16(m->Z_H, m->Z_L));",
+                writeback="Set16(m->Z_H, m->Z_L, Get16(m->Z_H, m->Z_L) + 1);"),
     Instruction(mnemonic="LSL",
                 opcode="0000_11rd_dddd_rrrr",
                 reads=(("R", "d", 8), ),
