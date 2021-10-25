@@ -93,7 +93,7 @@ typedef struct
 
 static inline Mem8 GetProgMemByte(Machine *m, Address16 a)
 {
-    return (m->FLASH[(a >> 1) % PROG_MEM_SIZE] >> (8 * (1 - (a & 0x1)))) & 0xff;
+    return (m->FLASH[(a >> 1) % PROG_MEM_SIZE] >> (8 * (a & 0x1))) & 0xff;
 }
 
 static inline Mem16 GetProgMem(Machine *m, Address16 a)
