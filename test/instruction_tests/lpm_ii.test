@@ -1,3 +1,4 @@
+Test LPM II, Z indexed variant.
 --- precondition
 m.R[10] = 0x11;
 Set16(m.Z_H, m.Z_L, 1024);

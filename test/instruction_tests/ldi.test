@@ -1,3 +1,4 @@
+Test LDI, basic check.
 --- precondition
 m.R[16] = 0x0;
 --- test

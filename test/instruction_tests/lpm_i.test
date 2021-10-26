@@ -1,3 +1,4 @@
+Test LPM I, no argument variant.
 --- precondition
 m.R[0] = 0x11;
 Set16(m.Z_H, m.Z_L, 1024);

@@ -1,3 +1,4 @@
+Test SWAP, basic check.
 --- precondition
 m.R[0] = 0x48;
 --- test
