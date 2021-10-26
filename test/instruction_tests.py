@@ -236,9 +236,20 @@ def run_test_wrapper(args) -> int:
 def run_tests(test_dir: str, parsed_arguments: Namespace) -> int:
     """Run all tests until a failure, or the end."""
     all_tests = list(get_tests())
+
+    # Filter out tests that aren't selected
+    if parsed_arguments.tests != "all":
+        specified_tests = set(parsed_arguments.tests.split(","))
+        for test in list(all_tests):
+            if test.name not in specified_tests:
+                all_tests.remove(test)
+
     test_count = len(all_tests)
     chdir(path.join(test_dir, "tests"))
+
+    # If we have a runner pool
     if parsed_arguments.pool > 1:
+        # run in parallel
         print("Running tests with pool of {}...".format(parsed_arguments.pool))
         with Pool(parsed_arguments.pool) as p:
             pool_result = p.map(
@@ -248,6 +259,7 @@ def run_tests(test_dir: str, parsed_arguments: Namespace) -> int:
             if any(pool_result):
                 return 1
     else:
+        # run in serial
         for test_index, test in enumerate(all_tests, 1):
             print("{:03d}/{:03d} {}".format(test_index, test_count, test.name))
             result = run_test(test, parsed_arguments)
@@ -286,6 +298,7 @@ def main() -> int:
     argument_parser.add_argument("--pool", type=int, default=1)
     argument_parser.add_argument("--mcu", default="attiny85")
     argument_parser.add_argument("--python", default="python3")
+    argument_parser.add_argument("--tests", default="all")
 
     parsed_arguments = argument_parser.parse_args()
 
@@ -293,16 +306,34 @@ def main() -> int:
 
     result_code = 0
 
+    # Run tests in a temporary directory
     with TemporaryDirectory(prefix="avr_tests") as test_dir:
+        # Copy source code to temp directory
         copytree(path.join(TEST_ROOT, "../src"), path.join(test_dir, "src"))
+
+        # Copy makefile and instruction generation code
         copy2(path.join(TEST_ROOT, "../Makefile"), path.join(test_dir, "Makefile"))
         copy2(path.join(TEST_ROOT, "../instructions.py"), path.join(test_dir, "instructions.py"))
+
+        # Prebuild the VM
         prebuild(test_dir, parsed_arguments)
+
+        # Remove main C file to be replaced per test
         remove(path.join(test_dir, "src", "atsim.c"))
+
+        # Create directory for individual tests
         mkdir(path.join(test_dir, "tests"))
+
+        # Track where we are
         original_location = getcwd()
+
+        # Move to the test directory
         chdir(test_dir)
+
+        # Run all the selected tests
         result_code = run_tests(test_dir, parsed_arguments)
+
+        # Restore original location
         chdir(original_location)
 
     if result_code == 0:

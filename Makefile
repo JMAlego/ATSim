@@ -1,6 +1,7 @@
 CC = clang
 PYTHON ?= python3
 TEST_POOL ?= 1
+TESTS ?= all
 CFLAGS ?= -std=c99 -Wall -Wextra -pedantic -O3
 CFLAGS_DEPS ?= $(CFLAGS) -MMD -MP
 OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
@@ -30,7 +31,7 @@ run: bin/$(TARGET)
 	./bin/$(TARGET) $(ARGS)
 
 test:
-	$(PYTHON) test/instruction_tests.py --python=$(PYTHON) --pool=$(TEST_POOL)
+	$(PYTHON) test/instruction_tests.py --python=$(PYTHON) --pool=$(TEST_POOL) --tests=$(TESTS)
 
 clean:
 	$(RM) $(OBJ)
