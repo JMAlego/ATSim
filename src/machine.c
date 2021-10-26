@@ -48,6 +48,20 @@ void dump_stack(Machine *m)
     puts("  BOS");
 }
 
+void dump_memory(Machine *m)
+{
+    puts("- DATA MEMORY -");
+    for (uint16_t i = 0; i < DATA_MEM_SIZE; i++)
+    {
+        printf("DATA[%04x] = %02x\n", i, GetDataMem(m, i));
+    }
+    puts("- PROG MEMORY -");
+    for (uint16_t i = 0; i < PROG_MEM_SIZE; i++)
+    {
+        printf("PROG[%04x] = %04x\n", i, GetProgMem(m, i));
+    }
+}
+
 void load_memory(Machine *m, uint8_t bytes[], size_t max)
 {
     for (size_t word_index = 0; word_index < max / 2; word_index++)
@@ -162,14 +176,14 @@ void interactive_view(Machine *m)
 
 void interactive_break(Machine *m)
 {
-    const char VALID_OPERATIONS[4] = {'c', 'd', 'v', 'e'};
+    const char VALID_OPERATIONS[5] = {'c', 'd', 'v', 'e', 'm'};
     bool continue_debug = true;
 
     printf("BREAK at PC=0x%04x\n", m->PC);
 
     while (continue_debug)
     {
-        const char read_char = read_char_from_set("break [exit=e, continue=c, dump=d, view=v] ", VALID_OPERATIONS);
+        const char read_char = read_char_from_set("break [exit=e, continue=c, dump=d, view=v, m=memdump] ", VALID_OPERATIONS);
         if (read_char == 'c')
         {
             continue_debug = false;
@@ -182,6 +196,10 @@ void interactive_break(Machine *m)
         else if (read_char == 'v')
         {
             interactive_view(m);
+        }
+        else if (read_char == 'm')
+        {
+            dump_memory(m);
         }
         else if (read_char == 'e')
         {
