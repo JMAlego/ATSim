@@ -1,0 +1,95 @@
+Test BRBS, attempts to jump back a full -64 memory locations.
+--- precondition
+m.SREG[SREG_I] = true; // 7
+m.SREG[SREG_T] = true;
+m.SREG[SREG_H] = true;
+m.SREG[SREG_S] = true;
+m.SREG[SREG_V] = true;
+m.SREG[SREG_N] = true;
+m.SREG[SREG_Z] = true;
+m.SREG[SREG_C] = true; // 0
+m.SREG[%sreg%] = false;
+--- test
+rjmp actual_start
+nop
+nop
+fail_loop:
+    rjmp fail_loop
+pass_loop:
+    rjmp pass_loop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+nop
+actual_start:
+    brbc %sreg%,pass_loop
+--- postcondition
+assert(m.PC == 4)
+--- parameters
+%sreg%
+0
+1
+2
+3
+4
+5
+6
+7

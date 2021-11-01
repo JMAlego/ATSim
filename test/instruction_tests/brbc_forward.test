@@ -1,0 +1,32 @@
+Test BRBC, basic check.
+--- precondition
+m.SREG[SREG_I] = true; // 7
+m.SREG[SREG_T] = true;
+m.SREG[SREG_H] = true;
+m.SREG[SREG_S] = true;
+m.SREG[SREG_V] = true;
+m.SREG[SREG_N] = true;
+m.SREG[SREG_Z] = true;
+m.SREG[SREG_C] = true; // 0
+m.SREG[%sreg%] = false;
+--- test
+brbc %sreg%,pass_loop
+nop
+nop
+nop
+fail_loop:
+    rjmp fail_loop
+pass_loop:
+    rjmp pass_loop
+--- postcondition
+assert(m.PC == 5)
+--- parameters
+%sreg%
+0
+1
+2
+3
+4
+5
+6
+7

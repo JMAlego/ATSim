@@ -1,0 +1,32 @@
+Test BRBS, basic check.
+--- precondition
+m.SREG[SREG_I] = false; // 7
+m.SREG[SREG_T] = false;
+m.SREG[SREG_H] = false;
+m.SREG[SREG_S] = false;
+m.SREG[SREG_V] = false;
+m.SREG[SREG_N] = false;
+m.SREG[SREG_Z] = false;
+m.SREG[SREG_C] = false; // 0
+m.SREG[%sreg%] = true;
+--- test
+brbs %sreg%,pass_loop
+nop
+nop
+nop
+fail_loop:
+    rjmp fail_loop
+pass_loop:
+    rjmp pass_loop
+--- postcondition
+assert(m.PC == 5)
+--- parameters
+%sreg%
+0
+1
+2
+3
+4
+5
+6
+7
