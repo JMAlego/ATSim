@@ -227,7 +227,7 @@ static inline Reg8 PopStack8(Machine *m)
 #define ClearBit(val, bit) ((val) & ~(0x1 << (bit)))
 
 #define IsNegative(val, bit_count) (((val) & ((1 << ((bit_count)-1)))) != 0)
-#define ToSigned(val, bit_count) (IsNegative(val, bit_count) ? -(((~(val) + 1) & ((1 << (bit_count - 1)) - 1))) : val)
+#define ToSigned(val, bit_count) (IsNegative(val, bit_count) ? -(((~(val) + 1) & ((1 << (bit_count)) - 1))) : val)
 
 void machine_cycle(Machine *m);
 void run_until_halt_loop(Machine *m);
