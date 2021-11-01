@@ -1,0 +1,10 @@
+Test LSR, basic check.
+--- precondition
+m.R[16] = 0xff;
+m.SREG[SREG_C] = false;
+--- test
+lsr R16
+--- postcondition
+assert(m.R[16] == 127);
+assert(m.SREG[SREG_C] == true);
+assert(m.PC == 1)

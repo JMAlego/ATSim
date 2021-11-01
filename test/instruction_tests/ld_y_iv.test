@@ -1,0 +1,15 @@
+Test LD IV, Y indexed with displacement.
+--- precondition
+m.R[10] = 0x11;
+m.R[11] = 0x11;
+Set16(m.Y_H, m.Y_L, 0x300);
+SetDataMem(&m, 0x302, 0x24);
+SetDataMem(&m, 0x33f, 0x42);
+--- test
+ldd r11,Y+2
+ldd r10,Y+63
+--- postcondition
+assert(m.R[10] == 0x42);
+assert(m.R[11] == 0x24);
+assert(Get16(m.Y_H, m.Y_L) == 0x300);
+assert(m.PC == 2);

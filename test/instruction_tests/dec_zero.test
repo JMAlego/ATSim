@@ -1,0 +1,10 @@
+Test DEC, basic check.
+--- precondition
+m.R[7] = 1;
+m.SREG[SREG_Z] = false;
+--- test
+dec R7
+--- postcondition
+assert(m.R[7] == 0);
+assert(m.SREG[SREG_Z] == true);
+assert(m.PC == 1)

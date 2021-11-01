@@ -1,0 +1,14 @@
+Test CP, basic check.
+--- precondition
+m.R[5] = 100;
+m.R[20] = 110;
+m.SREG[SREG_C] = false;
+m.SREG[SREG_Z] = true;
+--- test
+cp r5,r20
+--- postcondition
+assert(m.R[5] == 100);
+assert(m.R[20] == 110);
+assert(m.SREG[SREG_C] == true);
+assert(m.SREG[SREG_Z] == false);
+assert(m.PC == 1)

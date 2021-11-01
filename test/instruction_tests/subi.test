@@ -1,0 +1,8 @@
+Test SUBI, basic check (no status flags).
+--- precondition
+m.R[24] = 0x49;
+--- test
+subi r24,0x48
+--- postcondition
+assert(m.R[24] == 0x01);
+assert(m.PC == 1)

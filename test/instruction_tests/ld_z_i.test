@@ -1,0 +1,11 @@
+Test LD I, Z indexed.
+--- precondition
+m.R[10] = 0x11;
+Set16(m.Z_H, m.Z_L, 0x300);
+SetDataMem(&m, 0x300, 0x42);
+--- test
+ld r10,Z
+--- postcondition
+assert(m.R[10] == 0x42);
+assert(Get16(m.Z_H, m.Z_L) == 0x300);
+assert(m.PC == 1);

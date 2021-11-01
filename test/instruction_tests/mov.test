@@ -1,0 +1,10 @@
+Test MOV, basic check.
+--- precondition
+m.R[0] = 123;
+m.R[31] = 234;
+--- test
+mov r0,r31
+--- postcondition
+assert(m.R[0] == 234);
+assert(m.R[31] == 234);
+assert(m.PC == 1)

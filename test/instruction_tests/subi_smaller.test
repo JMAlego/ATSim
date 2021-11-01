@@ -1,0 +1,12 @@
+Test SUBI, basic check.
+--- precondition
+m.R[24] = 0x49;
+m.SREG[SREG_C] = true;
+m.SREG[SREG_Z] = true;
+--- test
+subi r24,0x48
+--- postcondition
+assert(m.R[24] == 0x01);
+assert(m.SREG[SREG_C] == false);
+assert(m.SREG[SREG_Z] == false);
+assert(m.PC == 1)

@@ -1,0 +1,15 @@
+Test ST IV, Y indexed with displacement.
+--- precondition
+m.R[10] = 0x42;
+m.R[11] = 0x24;
+Set16(m.Y_H, m.Y_L, 0x300);
+SetDataMem(&m, 0x302, 0x11);
+SetDataMem(&m, 0x33f, 0x11);
+--- test
+std Y+2,r11
+std Y+63,r10
+--- postcondition
+assert(GetDataMem(&m, 0x33f) == 0x42);
+assert(GetDataMem(&m, 0x302) == 0x24);
+assert(Get16(m.Y_H, m.Y_L) == 0x300);
+assert(m.PC == 2);

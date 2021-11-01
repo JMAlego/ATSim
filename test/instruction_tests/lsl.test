@@ -1,0 +1,10 @@
+Test LSL, basic check.
+--- precondition
+m.R[16] = 0xff;
+m.SREG[SREG_C] = false;
+--- test
+lsl R16
+--- postcondition
+assert(m.R[16] == 254);
+assert(m.SREG[SREG_C] == true);
+assert(m.PC == 1)

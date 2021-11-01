@@ -1,0 +1,10 @@
+Test ROR, basic check.
+--- precondition
+m.R[16] = 0xff;
+m.SREG[SREG_C] = false;
+--- test
+ror R16
+--- postcondition
+assert(m.R[16] == 127);
+assert(m.SREG[SREG_C] == true);
+assert(m.PC == 1)

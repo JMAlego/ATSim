@@ -1,0 +1,12 @@
+Test ADC, basic check.
+--- precondition
+m.R[3] = 200;
+m.R[27] = 100;
+m.SREG[SREG_C] = false;
+--- test
+adc r3,r27
+--- postcondition
+assert(m.R[3] == 44);
+assert(m.R[27] == 100);
+assert(m.SREG[SREG_C] == true);
+assert(m.PC == 1)

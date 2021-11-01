@@ -1,0 +1,8 @@
+Test DEC, basic check.
+--- precondition
+m.R[16] = 43;
+--- test
+dec R16
+--- postcondition
+assert(m.R[16] == 42);
+assert(m.PC == 1)
