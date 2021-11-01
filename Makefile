@@ -18,9 +18,9 @@ obj/%.o: src/%.c
 	@mkdir -p obj
 	$(CC) $(CFLAGS_DEPS) -c -o $@ $<
 
-bin/$(TARGET): src/$(TARGET).c $(OBJ_PLUS)
+bin/$(TARGET): $(OBJ_PLUS)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) -o bin/$(TARGET) $(OBJ_PLUS)
+	$(CC) $(CFLAGS) -o bin/$(TARGET) $^
 
 src/instructions.c: instructions.py
 	$(PYTHON) instructions.py
