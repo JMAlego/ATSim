@@ -20,7 +20,7 @@ obj/%.o: src/%.c
 
 bin/$(TARGET): src/$(TARGET).c $(OBJ_PLUS)
 	@mkdir -p bin
-	$(CC) $(CFLAGS) -o bin/$(TARGET) $(OBJ)
+	$(CC) $(CFLAGS) -o bin/$(TARGET) $(OBJ_PLUS)
 
 src/instructions.c: instructions.py
 	$(PYTHON) instructions.py
