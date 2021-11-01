@@ -6,7 +6,7 @@ from os import chdir, devnull, getcwd, listdir, mkdir, path, remove
 from shutil import copytree, copy2
 from subprocess import CalledProcessError, check_call
 from tempfile import TemporaryDirectory
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 from multiprocessing import Pool
 
 TEST_ROOT = path.abspath(path.dirname(__file__))
@@ -15,7 +15,7 @@ MAIN_OUTLINE = """\
 #include <stdio.h>
 #include "machine.h"
 
-#define assert(X) if(!(X)) {{_assertions++; printf("  ASSERTION %zu FAILED: " #X "\\n", _assertions); return 1;}}
+#define assert(X) if(!(X)) {{_assertions++; printf("  ASSERTION %zu FAILED: " #X "\\n", _assertions); dump_registers(&m); return 1;}}
 
 int main(void)
 {{
@@ -93,9 +93,12 @@ class Test:
     """Represents a testcase."""
 
     name: str
+    display_name: str
     precondition: List[str]
     test: List[str]
     postcondition: List[str]
+    parameter_variables: Optional[List[str]]
+    parameter_values: Optional[List[List[str]]]
 
     @staticmethod
     def from_file(file_path: str) -> "Test":
@@ -105,10 +108,13 @@ class Test:
         precondition: List[str] = []
         postcondition: List[str] = []
         test: List[str] = []
+        parameter_variables: List[str] = []
+        parameter_values: List[List[str]] = []
 
         in_precondition = False
         in_postcondition = False
         in_test = False
+        in_parameters = False
 
         with open(file_path, "r") as lines:
             for line in lines:
@@ -131,14 +137,23 @@ class Test:
                         in_postcondition = True
                     elif section == "test":
                         in_test = True
+                    elif section == "parameters":
+                        in_parameters = True
                 elif in_precondition:
                     precondition.append(line)
                 elif in_postcondition:
                     postcondition.append(line)
                 elif in_test:
                     test.append(line)
+                elif in_parameters:
+                    if not parameter_variables:
+                        parameter_variables = [x.strip() for x in line.split(",")]
+                    else:
+                        parameter_values.append([x.strip() for x in line.split(",")])
 
-        return Test(name, precondition, test, postcondition)
+        return Test(name, name, precondition, test, postcondition,
+                    parameter_variables if parameter_variables else None,
+                    parameter_values if parameter_values else None)
 
 
 def get_tests() -> Iterable[Test]:
@@ -192,7 +207,7 @@ def run_test(test: Test, parsed_arguments: Namespace, pooled_prefix="") -> int:
             if parsed_arguments.pool < 2:
                 print("  BUILD FAILURE")
             else:
-                print("  {}BUILD '{}' FAILURE".format(pooled_prefix, test.name))
+                print("  {}BUILD '{}' FAILURE".format(pooled_prefix, test.display_name))
             return error.returncode
 
         if parsed_arguments.pool < 2:
@@ -207,7 +222,7 @@ def run_test(test: Test, parsed_arguments: Namespace, pooled_prefix="") -> int:
             if parsed_arguments.pool < 2:
                 print("  BUILD FAILURE")
             else:
-                print("  {}BUILD '{}' FAILURE".format(pooled_prefix, test.name))
+                print("  {}BUILD '{}' FAILURE".format(pooled_prefix, test.display_name))
             return error.returncode
 
     if parsed_arguments.pool < 2:
@@ -218,12 +233,12 @@ def run_test(test: Test, parsed_arguments: Namespace, pooled_prefix="") -> int:
         if parsed_arguments.pool < 2:
             print("  TEST FAILURE")
         else:
-            print("  {}TEST '{}' FAILURE".format(pooled_prefix, test.name))
+            print("  {}TEST '{}' FAILURE".format(pooled_prefix, test.display_name))
         return error.returncode
     if parsed_arguments.pool < 2:
         print("  TEST SUCCESS")
     else:
-        print("  {}TEST '{}' SUCCESS".format(pooled_prefix, test.name))
+        print("  {}TEST '{}' SUCCESS".format(pooled_prefix, test.display_name))
 
     return 0
 
@@ -233,15 +248,43 @@ def run_test_wrapper(args) -> int:
     return run_test(*args)
 
 
+def expand_parametrised_tests(tests: Iterable[Test]) -> Iterable[Test]:
+    """Expand parametrised tests into a number of tests."""
+    for test in tests:
+        if test.parameter_variables and test.parameter_values:
+            for counter, value_set in enumerate(test.parameter_values):
+                if len(value_set) != len(test.parameter_variables):
+                    continue
+                new_test_precondition = list(test.precondition)
+                new_test_body = list(test.test)
+                new_test_postcondition = list(test.postcondition)
+                new_test_display_name = test.name
+                for var, val in zip(test.parameter_variables, value_set):
+                    new_test_precondition = [x.replace(var, val) for x in new_test_precondition]
+                    new_test_body = [x.replace(var, val) for x in new_test_body]
+                    new_test_postcondition = [x.replace(var, val) for x in new_test_postcondition]
+                    new_test_display_name += " {}={}".format(var, val)
+                new_test_name = "{}_p{}".format(test.name, counter)
+                yield Test(new_test_name, new_test_display_name, new_test_precondition,
+                           new_test_body, new_test_postcondition, None, None)
+        elif test.parameter_variables or test.parameter_values:
+            continue
+        else:
+            yield test
+
+
 def run_tests(test_dir: str, parsed_arguments: Namespace) -> int:
     """Run all tests until a failure, or the end."""
-    all_tests = list(get_tests())
+    all_tests = list(expand_parametrised_tests(get_tests()))
 
     # Filter out tests that aren't selected
     if parsed_arguments.tests != "all":
         specified_tests = set(parsed_arguments.tests.split(","))
+        wild_specified_tests = set(filter(lambda x: x.endswith("*"), specified_tests))
+        specified_tests.difference_update(wild_specified_tests)
         for test in list(all_tests):
-            if test.name not in specified_tests:
+            if test.name not in specified_tests and not any(
+                    test.name.startswith(wildcard[:-1]) for wildcard in wild_specified_tests):
                 all_tests.remove(test)
 
     test_count = len(all_tests)
@@ -261,7 +304,7 @@ def run_tests(test_dir: str, parsed_arguments: Namespace) -> int:
     else:
         # run in serial
         for test_index, test in enumerate(all_tests, 1):
-            print("{:03d}/{:03d} {}".format(test_index, test_count, test.name))
+            print("{:03d}/{:03d} {}".format(test_index, test_count, test.display_name))
             result = run_test(test, parsed_arguments)
 
             if result != 0:
