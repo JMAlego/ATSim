@@ -4,7 +4,7 @@ TEST_POOL ?= 1
 TESTS ?= all
 CFLAGS ?= -std=c99 -Wall -Wextra -pedantic -O3
 CFLAGS_DEPS ?= $(CFLAGS) -MMD -MP
-OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
+OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c)) $(patsubst src/peripherals/%.c,obj/peripherals/%.o,$(wildcard src/peripherals/*.c))
 OBJ_PLUS = $(OBJ) obj/instructions.o
 DEPS = $(OBJ:.o=.d)
 
@@ -15,7 +15,7 @@ TARGET := atsim
 all: bin/$(TARGET) $(OBJ_PLUS)
 
 obj/%.o: src/%.c
-	@mkdir -p obj
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS_DEPS) -c -o $@ $<
 
 bin/$(TARGET): $(OBJ_PLUS)

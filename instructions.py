@@ -314,7 +314,7 @@ class Instruction:
 
         # Debug macro sections
         yield "#ifdef DEBUG_PRINT_PC"
-        yield indented('printf("PC=%04x\\n", GetPC(m));')
+        yield indented('printf("PC(w)=%04x, PC(b)=%04x\\n", GetPC(m), GetPC(m)*2);')
         yield "#endif"
         yield "#ifdef DEBUG_PRINT_MNEMONICS"
         yield indented('puts("{} {}");'.format(self.mnemonic, self.full_plain_opcode))
@@ -964,6 +964,7 @@ def generate_decode_and_execute():
     yield indented(
         'printf("Warning: Instruction %04x at PC=%04x could not be decoded!\\n", opcode, GetPC(m));',
         indent_depth=2)
+    yield indented("interactive_break(m);")
     yield indented("}")
     yield "}"
     yield ""

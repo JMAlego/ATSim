@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "machine.h"
+#include "machine_accessors.h"
 
 int main(int argc, char* argv[])
 {

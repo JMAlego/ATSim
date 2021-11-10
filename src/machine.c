@@ -1,5 +1,6 @@
 #include "machine.h"
 #include "instructions.h"
+#include "peripherals.h"
 
 Mem16 fetch_instruction(Machine *m)
 {
@@ -8,8 +9,10 @@ Mem16 fetch_instruction(Machine *m)
 
 void machine_cycle(Machine *m)
 {
+    PeripheralPreTick(m);
     const Mem16 opcode = fetch_instruction(m);
     decode_and_execute_instruction(m, opcode);
+    PeripheralPostTick(m);
 }
 
 void run_until_halt_loop(Machine *m)

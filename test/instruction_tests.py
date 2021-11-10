@@ -14,6 +14,7 @@ TEST_ROOT = path.abspath(path.dirname(__file__))
 MAIN_OUTLINE = """\
 #include <stdio.h>
 #include "machine.h"
+#include "machine_accessors.h"
 
 #define assert(X) if(!(X)) {{_assertions++; printf("  ASSERTION %zu FAILED: " #X "\\n", _assertions); dump_registers(&m); return 1;}}
 
