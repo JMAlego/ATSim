@@ -11,7 +11,7 @@ static inline void PreSetDataMem(Machine *m, Address16 address)
     UNUSED(m);
     UNUSED(address);
 #ifdef PERIPHERAL_USI
-    if (address <= 0x10 || address >= 0x0D)
+    if (address <= 0x10 && address >= 0x0D)
     {
         USI_PostGetDataMem(m, address);
     }
@@ -23,7 +23,7 @@ static inline void PostSetDataMem(Machine *m, Address16 address)
     UNUSED(m);
     UNUSED(address);
 #ifdef PERIPHERAL_USI
-    if (address <= 0x10 || address >= 0x0D)
+    if (address <= 0x10 && address >= 0x0D)
     {
         USI_PostGetDataMem(m, address);
     }
@@ -35,7 +35,7 @@ static inline void PreGetDataMem(Machine *m, Address16 address)
     UNUSED(m);
     UNUSED(address);
 #ifdef PERIPHERAL_USI
-    if (address <= 0x10 || address >= 0x0D)
+    if (address <= 0x10 && address >= 0x0D)
     {
         USI_PostGetDataMem(m, address);
     }
@@ -47,7 +47,7 @@ static inline void PostGetDataMem(Machine *m, Address16 address)
     UNUSED(m);
     UNUSED(address);
 #ifdef PERIPHERAL_USI
-    if (address <= 0x10 || address >= 0x0D)
+    if (address <= 0x10 && address >= 0x0D)
     {
         USI_PostGetDataMem(m, address);
     }
