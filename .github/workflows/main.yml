@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - name: Install avr-gcc
+      - name: Install avr-libc
         run: sudo apt-get install -y avr-libc
 
       - name: Install binutils-avr
